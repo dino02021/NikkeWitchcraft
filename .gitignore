@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# IDEs/editors
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Logs and dumps
+*.log
+logs/
+dump/
+dumps/
+
+# App data
+NikkeWitchcraftSettings/
+
