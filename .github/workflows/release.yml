@@ -24,7 +24,10 @@ jobs:
       - name: Build exe
         run: |
           pyinstaller --noconsole --name NikkeWitchcraft main.py
+      - name: List dist
+        run: |
+          dir dist
       - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/NikkeWitchcraft.exe
+          files: dist/NikkeWitchcraft/NikkeWitchcraft.exe
