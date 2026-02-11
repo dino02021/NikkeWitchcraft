@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import tkinter as tk
+import sys
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class AppUI:
         self._bind_tip: tk.Toplevel | None = None
         self._status_var = tk.StringVar()
         self._status_label: ttk.Label | None = None
+        self._icon_img: tk.PhotoImage | None = None
         self._apply_msg_var = tk.StringVar()
         self._hotkey_vars: dict[str, tk.StringVar] = {}
         self._delay_vars: dict[str, tk.StringVar] = {}
@@ -62,13 +64,17 @@ class AppUI:
     def _build(self) -> None:
         container = create_frame(self.root)
         try:
-            base_dir = Path(__file__).resolve().parents[2]
+            if hasattr(sys, "_MEIPASS"):
+                base_dir = Path(sys._MEIPASS)
+            else:
+                base_dir = Path(__file__).resolve().parents[2]
             ico_path = base_dir / "assets" / "app.ico"
             png_path = base_dir / "assets" / "app.png"
             if ico_path.exists():
                 self.root.iconbitmap(default=str(ico_path))
             if png_path.exists():
-                self.root.iconphoto(True, tk.PhotoImage(file=str(png_path)))
+                self._icon_img = tk.PhotoImage(file=str(png_path))
+                self.root.iconphoto(True, self._icon_img)
         except Exception:
             pass
         row = 0
