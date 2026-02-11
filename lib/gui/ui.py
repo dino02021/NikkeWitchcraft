@@ -62,9 +62,13 @@ class AppUI:
     def _build(self) -> None:
         container = create_frame(self.root)
         try:
-            icon_path = Path(__file__).resolve().parents[2] / "assets" / "app.png"
-            if icon_path.exists():
-                self.root.iconphoto(True, tk.PhotoImage(file=str(icon_path)))
+            base_dir = Path(__file__).resolve().parents[2]
+            ico_path = base_dir / "assets" / "app.ico"
+            png_path = base_dir / "assets" / "app.png"
+            if ico_path.exists():
+                self.root.iconbitmap(default=str(ico_path))
+            if png_path.exists():
+                self.root.iconphoto(True, tk.PhotoImage(file=str(png_path)))
         except Exception:
             pass
         row = 0

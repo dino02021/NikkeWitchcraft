@@ -27,6 +27,8 @@ WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
 WM_QUIT = 0x0012
 HC_ACTION = 0
+LLKHF_INJECTED = 0x00000010
+LLMHF_INJECTED = 0x00000001
 
 
 ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
@@ -168,6 +170,8 @@ def start_hooks(
                 return _safe_next(nCode, wParam, lParam)
             if nCode == HC_ACTION:
                 data = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                if data.flags & LLKHF_INJECTED:
+                    return _safe_next(nCode, wParam, lParam)
                 name = _vk_to_name(data.vkCode)
                 if name:
                     is_down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
@@ -183,6 +187,8 @@ def start_hooks(
                 return _safe_next(nCode, wParam, lParam)
             if nCode == HC_ACTION:
                 data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                if data.flags & LLMHF_INJECTED:
+                    return _safe_next(nCode, wParam, lParam)
                 name = _mouse_name(wParam, data.mouseData)
                 if name:
                     is_down = wParam in (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_XBUTTONDOWN)
