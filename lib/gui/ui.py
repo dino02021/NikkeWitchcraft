@@ -61,6 +61,12 @@ class AppUI:
 
     def _build(self) -> None:
         container = create_frame(self.root)
+        try:
+            icon_path = Path(__file__).resolve().parents[2] / "assets" / "app.png"
+            if icon_path.exists():
+                self.root.iconphoto(True, tk.PhotoImage(file=str(icon_path)))
+        except Exception:
+            pass
         row = 0
 
         bind_frame = create_entry_frame(container, row=row, column=0)

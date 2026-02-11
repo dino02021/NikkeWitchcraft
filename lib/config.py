@@ -30,12 +30,12 @@ class Settings:
     key_panic: str = "F20"
 
     # enable
-    is_spam_d_enabled: bool = False
-    is_spam_s_enabled: bool = False
-    is_spam_a_enabled: bool = False
+    is_spam_d_enabled: bool = True
+    is_spam_s_enabled: bool = True
+    is_spam_a_enabled: bool = True
     is_click1_enabled: bool = True
     is_click2_enabled: bool = True
-    is_click3_enabled: bool = False
+    is_click3_enabled: bool = True
     is_panic_enabled: bool = True
 
     # buttons

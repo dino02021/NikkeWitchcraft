@@ -23,7 +23,7 @@ jobs:
           pip install pyinstaller
       - name: Build exe
         run: |
-          pyinstaller --noconsole --name NikkeWitchcraft main.py
+          pyinstaller --noconsole --name NikkeWitchcraft --icon assets/app.ico main.py
       - name: List dist
         run: |
           dir dist

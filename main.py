@@ -215,11 +215,15 @@ def _quit_app(root: tk.Tk, icon, item=None) -> None:
 
 
 def _build_tray_icon() -> Image.Image:
-    img = Image.new("RGB", (64, 64), color=(30, 30, 30))
-    draw = ImageDraw.Draw(img)
-    draw.rectangle((8, 8, 56, 56), outline=(255, 255, 255), width=3)
-    draw.text((18, 18), "NW", fill=(255, 255, 255))
-    return img
+    try:
+        icon_path = Path(__file__).resolve().parent / "assets" / "app.png"
+        return Image.open(icon_path).convert("RGBA")
+    except Exception:
+        img = Image.new("RGB", (64, 64), color=(30, 30, 30))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((8, 8, 56, 56), outline=(255, 255, 255), width=3)
+        draw.text((18, 18), "NW", fill=(255, 255, 255))
+        return img
 
 
 def _shutdown_app(root: tk.Tk, reason: str, icon=None) -> None:
@@ -321,11 +325,33 @@ def _terminate_existing_instances() -> None:
     user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel32.TerminateProcess.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     current_pid = os.getpid()
+    current_exe = os.path.normcase(os.path.abspath(sys.executable))
+
+    def _get_process_image(pid: int) -> str | None:
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            buf_len = wintypes.DWORD(4096)
+            buf = ctypes.create_unicode_buffer(buf_len.value)
+            ok = kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(buf_len))
+            if not ok:
+                return None
+            return buf.value
+        finally:
+            kernel32.CloseHandle(handle)
 
     def enum_proc(hwnd, lparam):
         length = user32.GetWindowTextLengthW(hwnd)
@@ -338,6 +364,11 @@ def _terminate_existing_instances() -> None:
         pid = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if pid.value and pid.value != current_pid:
+            img = _get_process_image(pid.value)
+            if not img:
+                return 1
+            if os.path.normcase(os.path.abspath(img)) != current_exe:
+                return 1
             handle = kernel32.OpenProcess(0x0001, False, pid.value)
             if handle:
                 kernel32.TerminateProcess(handle, 0)
