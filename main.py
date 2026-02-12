@@ -99,8 +99,8 @@ def main() -> None:
                         lambda stop: actions.run_click(settings.key_click3, settings.click_btn3,
                                                        settings.click3_hold_ms, settings.click3_gap_ms, stop)))
 
-    hk.define(HotkeyDef("Panic", settings.key_panic, settings.is_panic_enabled,
-                        lambda stop: actions.panic()))
+    hk.define(HotkeyDef("Jitter", settings.key_jitter, settings.is_jitter_enabled,
+                        lambda stop: actions.run_jitter(settings.key_jitter, stop)))
 
     hk.start()
 

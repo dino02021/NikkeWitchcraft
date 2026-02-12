@@ -82,7 +82,16 @@ def create_dialog(
         dlg.transient(parent)
     if dialog_kwargs.pop("grab", True):
         dlg.grab_set()
+    override_redirect = dialog_kwargs.pop("override_redirect", False)
+    if override_redirect:
+        dlg.overrideredirect(True)
     place_on_same_screen(parent, dlg, width, height)
+    if override_redirect:
+        # 強制再套一次，避免部分環境下仍出現標題列
+        try:
+            dlg.overrideredirect(True)
+        except Exception:
+            pass
     return dlg
 
 

@@ -46,7 +46,11 @@ class AppUI:
         self._apply_msg_var = tk.StringVar()
         self._hotkey_vars: dict[str, tk.StringVar] = {}
         self._delay_vars: dict[str, tk.StringVar] = {}
-        self._panic_var = tk.StringVar()
+        self._delay_widgets: dict[str, list[tk.Widget]] = {}
+        self._delay_info_widgets: dict[str, list[tk.Widget]] = {}
+        self._jitter_var = tk.StringVar()
+        self._jitter_btns: dict[str, ttk.Button] = {}
+        self._row_widgets: dict[str, list[tk.Widget]] = {}
         self._click_info_vars = {
             "ClickSeq1": tk.StringVar(),
             "ClickSeq2": tk.StringVar(),
@@ -93,7 +97,7 @@ class AppUI:
         self._row_click(hotkey_frame, 4, "連點1：", "ClickSeq1")
         self._row_click(hotkey_frame, 5, "連點2：", "ClickSeq2")
         self._row_click(hotkey_frame, 6, "連點3：", "ClickSeq3")
-        self._row_panic(hotkey_frame, 7, "逃脫鍵：")
+        self._row_jitter(hotkey_frame, 7, "抖槍術：")
         row += 1
 
         self._add_separator(container, row)
@@ -144,60 +148,89 @@ class AppUI:
         self._status_label = create_msg_label(status_frame, self._status_var, row=0, column=0, padx=0)
 
     def _row_hotkey(self, parent, row: int, label: str, hid: str) -> None:
-        create_entry_label(parent, label, row=row, column=0)
+        row_widgets: list[tk.Widget] = []
+        label_widget = create_entry_label(parent, label, row=row, column=0)
+        row_widgets.append(label_widget)
         var = tk.StringVar()
         ent = create_entry(parent, var, row=row, column=1)
         ent.configure(state="readonly")
+        row_widgets.append(ent)
         self._hotkey_vars[hid] = var
         setattr(self, f"edit_{hid}", ent)
         btn_frame = create_btn_frame(parent, row=row, column=2, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)
-        create_btn_between(btn_frame, "變更", lambda: self._start_bind(hid), row=0, column=0, sticky="w")
+        btn = create_btn_between(btn_frame, "變更", lambda: self._start_bind(hid), row=0, column=0, sticky="w")
+        row_widgets.append(btn)
         var_chk = tk.IntVar()
-        chk = ttk.Checkbutton(parent, text="啟用", variable=var_chk, command=lambda: self._toggle_enabled(hid, var_chk))
-        chk.grid(row=row, column=3, sticky="w", padx=ui.LABEL_PADX)
+        chk = create_checkbutton(parent, "啟用", var_chk, lambda: self._toggle_enabled(hid, var_chk), row=row, column=3)
+        row_widgets.append(chk)
         setattr(self, f"chk_{hid}", var_chk)
+        self._row_widgets[hid] = row_widgets
 
     def _row_click(self, parent, row: int, label: str, hid: str) -> None:
         self._row_hotkey(parent, row, label, hid)
         btn_frame = create_btn_frame(parent, row=row, column=4, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)
         btn = create_btn_last(btn_frame, "左鍵", lambda: self._toggle_click_button(hid), row=0, column=0, sticky="w")
         setattr(self, f"btn_{hid}", btn)
+        self._row_widgets.setdefault(hid, []).append(btn)
 
     def _row_delay(self, parent, row: int, title: str, hid: str) -> None:
         row_frame = create_entry_frame(parent, row=row, column=0)
+        widgets: list[tk.Widget] = []
         hold_var = tk.StringVar()
         gap_var = tk.StringVar()
-        create_entry_label(row_frame, f"{title}：按住 (ms)", row=0, column=0)
+        lbl_hold = create_entry_label(row_frame, f"{title}：按住 (ms)", row=0, column=0)
         ent_hold = create_entry(row_frame, hold_var, row=0, column=1)
         ent_hold.configure(width=12)
-        create_entry_label(row_frame, f"{title}：休息 (ms)", row=1, column=0)
+        lbl_gap = create_entry_label(row_frame, f"{title}：休息 (ms)", row=1, column=0)
         ent_gap = create_entry(row_frame, gap_var, row=1, column=1)
         ent_gap.configure(width=12)
         self._delay_vars[f"{hid}_hold"] = hold_var
         self._delay_vars[f"{hid}_gap"] = gap_var
         setattr(self, f"edit_{hid}_hold", ent_hold)
         setattr(self, f"edit_{hid}_gap", ent_gap)
+        widgets.extend([lbl_hold, ent_hold, lbl_gap, ent_gap])
+        self._delay_widgets[hid] = widgets
 
-    def _row_panic(self, parent, row: int, label: str) -> None:
-        create_entry_label(parent, label, row=row, column=0, pady=ui.ENTRY_LABEL_PADY)
-        ent = create_entry(parent, self._panic_var, row=row, column=1, pady=ui.ENTRY_PADY)
-        ent.configure(state="readonly", width=12)
-        self.edit_panic = ent
+    def _row_jitter(self, parent, row: int, label: str) -> None:
+        row_widgets: list[tk.Widget] = []
+        label_widget = create_entry_label(parent, label, row=row)
+        row_widgets.append(label_widget)
+        ent = create_entry(parent, self._jitter_var, row=row, column=1)
+        ent.configure(state="readonly")
+        row_widgets.append(ent)
+        self.edit_jitter = ent
         btn_frame = create_btn_frame(parent, row=row, column=2, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)
-        create_btn_between(btn_frame, "變更", lambda: self._start_bind("Panic"), row=0, column=0, sticky="w")
-        self.chk_panic = tk.IntVar()
-        chk = ttk.Checkbutton(parent, text="啟用", variable=self.chk_panic, command=self._toggle_panic)
-        chk.grid(row=row, column=3, sticky="w", padx=ui.LABEL_PADX, pady=ui.ENTRY_LABEL_PADY)
+        btn = create_btn_between(btn_frame, "變更", lambda: self._start_bind("Jitter"), row=0, column=0, sticky="w")
+        row_widgets.append(btn)
+        self.chk_jitter = tk.IntVar()
+        chk = create_checkbutton(parent, "啟用", self.chk_jitter, self._toggle_jitter, row=row, column=3, pady=ui.ENTRY_LABEL_PADY)
+        row_widgets.append(chk)
+        toggle_frame = create_btn_frame(parent, row=row, column=4, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)
+        for i, letter in enumerate(["Z", "X", "C", "V", "B"]):
+            btn = create_btn_between(
+                toggle_frame,
+                text="",
+                command=lambda l=letter: self._toggle_jitter_key(l),
+                row=0,
+                column=i,
+                sticky="w",
+                padx=0
+            )
+            btn.configure(width=2)
+            self._jitter_btns[letter] = btn
+            row_widgets.append(btn)
+        self._row_widgets["Jitter"] = row_widgets
 
     def _add_click_info(self, parent, row: int, hid: str) -> None:
-        lbl = ttk.Label(parent, textvariable=self._click_info_vars[hid])
-        lbl.grid(row=row, column=0, sticky="w")
-        warn = ttk.Label(parent, textvariable=self._click_warn_vars[hid], foreground="red")
-        warn.grid(row=row, column=1, sticky="w", padx=ui.LABEL_PADX, pady=ui.LABEL_PADY)
+        widgets: list[tk.Widget] = []
+        info = create_msg_label(parent, self._click_info_vars[hid], row=row, column=0, padx=0)
+        warn = create_msg_label(parent, self._click_warn_vars[hid], row=row, column=1)
+        warn.configure(foreground="red")
+        widgets.extend([info, warn])
+        self._delay_info_widgets[hid] = widgets
 
     def _add_separator(self, parent, row: int) -> None:
-        sep_frame = ttk.Frame(parent)
-        sep_frame.grid(row=row, column=0, sticky="ew", padx=ui.FRAME_GRID_PADX, pady=ui.FRAME_GRID_PADY)
+        sep_frame = create_entry_frame(parent, row=row, column=0)
         sep_frame.columnconfigure(0, weight=1)
         ttk.Separator(sep_frame, orient="horizontal").grid(row=0, column=0, sticky="ew")
 
@@ -205,9 +238,12 @@ class AppUI:
         self._binding_target = hid
         if self._bind_tip:
             close_dialog(self._bind_tip)
-        self._bind_tip = create_dialog(self.root, "綁定", 220, 90)
+        self._bind_tip = create_dialog(self.root, "綁定", 150, 80, override_redirect=False)
         dlg_frame = create_frame(self._bind_tip)
-        create_entry_label(dlg_frame, "請按下要綁定的按鍵", row=0, column=0, sticky="w")
+        dlg_frame.columnconfigure(0, weight=1)
+        dlg_frame.rowconfigure(0, weight=1)
+        label = create_entry_label(dlg_frame, "請按下要綁定的按鍵", row=0, column=0, sticky="nswe", padx=0, pady=0)
+        label.configure(anchor="center", justify="center")
         self.hk.set_binding_callback(self._finish_bind)
 
     def _finish_bind(self, key_name: str) -> None:
@@ -231,8 +267,8 @@ class AppUI:
             self.s.key_click2 = key_name
         elif hid == "ClickSeq3":
             self.s.key_click3 = key_name
-        elif hid == "Panic":
-            self.s.key_panic = key_name
+        elif hid == "Jitter":
+            self.s.key_jitter = key_name
         self._apply_hotkey_defs()
         self.store.save(self.s)
         self._refresh()
@@ -252,13 +288,45 @@ class AppUI:
         elif hid == "ClickSeq3":
             self.s.is_click3_enabled = val
         self._apply_hotkey_defs()
+        self._update_row_enabled(hid, val)
+        if hid in ("ClickSeq1", "ClickSeq2", "ClickSeq3"):
+            self._update_delay_enabled(hid, val)
         self.store.save(self.s)
 
-    def _toggle_panic(self) -> None:
-        self.s.is_panic_enabled = self.chk_panic.get() != 0
+    def _toggle_jitter(self) -> None:
+        self.s.is_jitter_enabled = self.chk_jitter.get() != 0
         self._apply_hotkey_defs()
+        self._update_row_enabled("Jitter", self.s.is_jitter_enabled)
         self.store.save(self.s)
 
+    def _toggle_jitter_key(self, letter: str) -> None:
+        key = letter.upper()
+        if key == "Z":
+            self.s.jitter_z = not self.s.jitter_z
+        elif key == "X":
+            self.s.jitter_x = not self.s.jitter_x
+        elif key == "C":
+            self.s.jitter_c = not self.s.jitter_c
+        elif key == "V":
+            self.s.jitter_v = not self.s.jitter_v
+        elif key == "B":
+            self.s.jitter_b = not self.s.jitter_b
+        self.store.save(self.s)
+        self._refresh_jitter_buttons()
+
+    def _refresh_jitter_buttons(self) -> None:
+        mapping = {
+            "Z": self.s.jitter_z,
+            "X": self.s.jitter_x,
+            "C": self.s.jitter_c,
+            "V": self.s.jitter_v,
+            "B": self.s.jitter_b,
+        }
+        for key, btn in self._jitter_btns.items():
+            if mapping.get(key, False):
+                btn.configure(text="✓")
+            else:
+                btn.configure(text="")
     def _toggle_click_button(self, hid: str) -> None:
         if hid == "ClickSeq1":
             self.s.click_btn1 = "RButton" if self.s.click_btn1 == "LButton" else "LButton"
@@ -332,7 +400,7 @@ class AppUI:
         self.hk.update_key("ClickSeq1", self.s.key_click1)
         self.hk.update_key("ClickSeq2", self.s.key_click2)
         self.hk.update_key("ClickSeq3", self.s.key_click3)
-        self.hk.update_key("Panic", self.s.key_panic)
+        self.hk.update_key("Jitter", self.s.key_jitter)
 
         self.hk.update_enabled("DSpam", self.s.is_spam_d_enabled)
         self.hk.update_enabled("SSpam", self.s.is_spam_s_enabled)
@@ -340,7 +408,7 @@ class AppUI:
         self.hk.update_enabled("ClickSeq1", self.s.is_click1_enabled)
         self.hk.update_enabled("ClickSeq2", self.s.is_click2_enabled)
         self.hk.update_enabled("ClickSeq3", self.s.is_click3_enabled)
-        self.hk.update_enabled("Panic", self.s.is_panic_enabled)
+        self.hk.update_enabled("Jitter", self.s.is_jitter_enabled)
 
     def _refresh(self) -> None:
         self._hotkey_vars["DSpam"].set(self.s.key_spam_d)
@@ -349,7 +417,7 @@ class AppUI:
         self._hotkey_vars["ClickSeq1"].set(self.s.key_click1)
         self._hotkey_vars["ClickSeq2"].set(self.s.key_click2)
         self._hotkey_vars["ClickSeq3"].set(self.s.key_click3)
-        self._panic_var.set(self.s.key_panic)
+        self._jitter_var.set(self.s.key_jitter)
 
         self.chk_DSpam.set(1 if self.s.is_spam_d_enabled else 0)
         self.chk_SSpam.set(1 if self.s.is_spam_s_enabled else 0)
@@ -357,7 +425,7 @@ class AppUI:
         self.chk_ClickSeq1.set(1 if self.s.is_click1_enabled else 0)
         self.chk_ClickSeq2.set(1 if self.s.is_click2_enabled else 0)
         self.chk_ClickSeq3.set(1 if self.s.is_click3_enabled else 0)
-        self.chk_panic.set(1 if self.s.is_panic_enabled else 0)
+        self.chk_jitter.set(1 if self.s.is_jitter_enabled else 0)
 
         self.btn_ClickSeq1.config(text="✓左鍵" if self.s.click_btn1 == "LButton" else "✓右鍵")
         self.btn_ClickSeq2.config(text="✓左鍵" if self.s.click_btn2 == "LButton" else "✓右鍵")
@@ -375,8 +443,10 @@ class AppUI:
         self.chk_global_hotkeys.set(1 if self.s.is_global_hotkeys else 0)
 
         self._apply_hotkey_defs()
+        self._update_all_row_enabled()
         self._update_click_info()
         self._update_status()
+        self._refresh_jitter_buttons()
 
     def _update_click_info(self) -> None:
         mapping = {
@@ -411,3 +481,62 @@ class AppUI:
             self._last_game_state = current
             if exe_name.lower() == "nikke.exe":
                 self.log.event("UI", "GameState", "event", f"fg={fg} exe={exe_name}")
+
+    def _update_all_row_enabled(self) -> None:
+        state_map = {
+            "DSpam": self.s.is_spam_d_enabled,
+            "SSpam": self.s.is_spam_s_enabled,
+            "ASpam": self.s.is_spam_a_enabled,
+            "ClickSeq1": self.s.is_click1_enabled,
+            "ClickSeq2": self.s.is_click2_enabled,
+            "ClickSeq3": self.s.is_click3_enabled,
+            "Jitter": self.s.is_jitter_enabled,
+        }
+        for hid, enabled in state_map.items():
+            self._update_row_enabled(hid, enabled)
+        for hid in ["ClickSeq1", "ClickSeq2", "ClickSeq3"]:
+            self._update_delay_enabled(hid, state_map.get(hid, True))
+
+    def _update_row_enabled(self, hid: str, enabled: bool) -> None:
+        widgets = self._row_widgets.get(hid, [])
+        state = "normal" if enabled else "disabled"
+        for widget in widgets:
+            try:
+                if isinstance(widget, ttk.Button):
+                    widget.configure(state=state)
+                elif isinstance(widget, ttk.Entry):
+                    widget.configure(state="readonly" if enabled else "disabled")
+                elif isinstance(widget, ttk.Checkbutton):
+                    if widget.cget("text") != "啟用":
+                        widget.configure(state=state)
+                elif isinstance(widget, ttk.Label):
+                    widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _update_delay_enabled(self, hid: str, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        for widget in self._delay_widgets.get(hid, []):
+            try:
+                if isinstance(widget, ttk.Entry):
+                    widget.configure(state="normal" if enabled else "disabled")
+                elif isinstance(widget, ttk.Label):
+                    widget.configure(state=state)
+            except Exception:
+                pass
+        for widget in self._delay_info_widgets.get(hid, []):
+            try:
+                if isinstance(widget, ttk.Label):
+                    widget.configure(state=state)
+            except Exception:
+                pass
+        warn_var = self._click_warn_vars.get(hid)
+        if not warn_var:
+            return
+        warn_widgets = self._delay_info_widgets.get(hid, [])
+        for widget in warn_widgets:
+            try:
+                if isinstance(widget, ttk.Label) and widget.cget("textvariable") == str(warn_var):
+                    widget.configure(foreground=("red" if enabled else "gray"))
+            except Exception:
+                pass

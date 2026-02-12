@@ -15,10 +15,6 @@ class Actions:
     def is_context_enabled(self) -> bool:
         return self.s.is_global_hotkeys or winapi.is_foreground_exe("nikke.exe")
 
-    def panic(self) -> None:
-        for key in ["DSpam", "SSpam", "ASpam", "ClickSeq1", "ClickSeq2", "ClickSeq3"]:
-            self.hk.stop_hotkey(key)
-
     def run_spam(self, trigger_key: str, output_key: str, stop_ev: threading.Event) -> None:
         while self.hk.should_run(trigger_key, stop_ev):
             self._press_key(output_key)
@@ -54,6 +50,30 @@ class Actions:
                     break
         finally:
             self._release_click(btn_name)
+
+    def run_jitter(self, trigger_key: str, stop_ev: threading.Event) -> None:
+        while self.hk.should_run(trigger_key, stop_ev):
+            seq = []
+            if self.s.jitter_z:
+                seq.append("z")
+            if self.s.jitter_x:
+                seq.append("x")
+            if self.s.jitter_c:
+                seq.append("c")
+            if self.s.jitter_v:
+                seq.append("v")
+            if self.s.jitter_b:
+                seq.append("b")
+            if not seq:
+                if not self.hk.wait_ms_cancel(self.s.key_spam_delay_ms, trigger_key, stop_ev):
+                    break
+                continue
+            for key in seq:
+                if not self.hk.should_run(trigger_key, stop_ev):
+                    return
+                self._press_key(key)
+                if not self.hk.wait_ms_cancel(self.s.key_spam_delay_ms, trigger_key, stop_ev):
+                    return
 
     def _key_from_name(self, name: str):
         n = name.strip().lower()

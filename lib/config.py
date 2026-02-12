@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "NikkeWitchcraft"
-APP_VERSION = "1.03"
+APP_VERSION = "1.04"
 APP_TITLE = f"{APP_NAME} v{APP_VERSION}"
 
 
@@ -27,7 +27,7 @@ class Settings:
     key_click1: str = "F17"
     key_click2: str = "F18"
     key_click3: str = "F19"
-    key_panic: str = "F20"
+    key_jitter: str = "F20"
 
     # enable
     is_spam_d_enabled: bool = True
@@ -36,7 +36,14 @@ class Settings:
     is_click1_enabled: bool = True
     is_click2_enabled: bool = True
     is_click3_enabled: bool = True
-    is_panic_enabled: bool = True
+    is_jitter_enabled: bool = True
+
+    # jitter toggle
+    jitter_z: bool = True
+    jitter_x: bool = True
+    jitter_c: bool = True
+    jitter_v: bool = True
+    jitter_b: bool = True
 
     # buttons
     click_btn1: str = "LButton"
@@ -79,7 +86,7 @@ class ConfigStore:
             s.key_click1 = get("Keys", "ClickSeq1", fallback=s.key_click1)
             s.key_click2 = get("Keys", "ClickSeq2", fallback=s.key_click2)
             s.key_click3 = get("Keys", "ClickSeq3", fallback=s.key_click3)
-            s.key_panic = get("Keys", "Panic", fallback=s.key_panic)
+            s.key_jitter = get("Keys", "Jitter", fallback=get("Keys", "Panic", fallback=s.key_jitter))
         if cp.has_section("Enable"):
             s.is_spam_d_enabled = getbool("Enable", "DSpam", fallback=s.is_spam_d_enabled)
             s.is_spam_s_enabled = getbool("Enable", "SSpam", fallback=s.is_spam_s_enabled)
@@ -87,7 +94,13 @@ class ConfigStore:
             s.is_click1_enabled = getbool("Enable", "ClickSeq1", fallback=s.is_click1_enabled)
             s.is_click2_enabled = getbool("Enable", "ClickSeq2", fallback=s.is_click2_enabled)
             s.is_click3_enabled = getbool("Enable", "ClickSeq3", fallback=s.is_click3_enabled)
-            s.is_panic_enabled = getbool("Enable", "Panic", fallback=s.is_panic_enabled)
+            s.is_jitter_enabled = getbool("Enable", "Jitter", fallback=getbool("Enable", "Panic", fallback=s.is_jitter_enabled))
+        if cp.has_section("Jitter"):
+            s.jitter_z = getbool("Jitter", "Z", fallback=s.jitter_z)
+            s.jitter_x = getbool("Jitter", "X", fallback=s.jitter_x)
+            s.jitter_c = getbool("Jitter", "C", fallback=s.jitter_c)
+            s.jitter_v = getbool("Jitter", "V", fallback=s.jitter_v)
+            s.jitter_b = getbool("Jitter", "B", fallback=s.jitter_b)
         if cp.has_section("Buttons"):
             s.click_btn1 = get("Buttons", "ClickSeq1_Button", fallback=s.click_btn1)
             s.click_btn2 = get("Buttons", "ClickSeq2_Button", fallback=s.click_btn2)
@@ -116,7 +129,7 @@ class ConfigStore:
             "ClickSeq1": s.key_click1,
             "ClickSeq2": s.key_click2,
             "ClickSeq3": s.key_click3,
-            "Panic": s.key_panic,
+            "Jitter": s.key_jitter,
         }
         cp["Enable"] = {
             "DSpam": str(int(s.is_spam_d_enabled)),
@@ -125,7 +138,14 @@ class ConfigStore:
             "ClickSeq1": str(int(s.is_click1_enabled)),
             "ClickSeq2": str(int(s.is_click2_enabled)),
             "ClickSeq3": str(int(s.is_click3_enabled)),
-            "Panic": str(int(s.is_panic_enabled)),
+            "Jitter": str(int(s.is_jitter_enabled)),
+        }
+        cp["Jitter"] = {
+            "Z": str(int(s.jitter_z)),
+            "X": str(int(s.jitter_x)),
+            "C": str(int(s.jitter_c)),
+            "V": str(int(s.jitter_v)),
+            "B": str(int(s.jitter_b)),
         }
         cp["Buttons"] = {
             "ClickSeq1_Button": s.click_btn1,
