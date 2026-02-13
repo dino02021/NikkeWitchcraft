@@ -84,10 +84,6 @@ class AppUI:
         row = 0
 
         bind_frame = create_entry_frame(container, row=row, column=0)
-        bind_frame.columnconfigure(1, weight=1, uniform="hotkey")
-        bind_frame.columnconfigure(2, weight=0)
-        bind_frame.columnconfigure(3, weight=0)
-        bind_frame.columnconfigure(4, weight=0)
 
         create_entry_label(bind_frame, "按鍵綁定：", row=0, column=0)
         hotkey_frame = create_entry_frame(bind_frame, row=1, column=0)
@@ -153,7 +149,7 @@ class AppUI:
         row_widgets.append(label_widget)
         var = tk.StringVar()
         ent = create_entry(parent, var, row=row, column=1)
-        ent.configure(state="readonly")
+        ent.configure(state="readonly", width=12)
         row_widgets.append(ent)
         self._hotkey_vars[hid] = var
         setattr(self, f"edit_{hid}", ent)
@@ -196,7 +192,7 @@ class AppUI:
         label_widget = create_entry_label(parent, label, row=row)
         row_widgets.append(label_widget)
         ent = create_entry(parent, self._jitter_var, row=row, column=1)
-        ent.configure(state="readonly")
+        ent.configure(state="readonly", width=12)
         row_widgets.append(ent)
         self.edit_jitter = ent
         btn_frame = create_btn_frame(parent, row=row, column=2, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)

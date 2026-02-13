@@ -44,6 +44,14 @@ class HotkeyManager:
         self._hook_state = None
         self._bound_keys_cache: set[str] = set()
 
+    _GENERIC_VARIANTS: dict[str, tuple[str, ...]] = {
+        # Keep old config values working, while allowing left/right bindings.
+        "shift": ("lshift", "rshift"),
+        "ctrl": ("lctrl", "rctrl"),
+        "alt": ("lalt", "ralt"),
+        "cmd": ("lcmd", "rcmd"),
+    }
+
     def start(self) -> None:
         self._event_stop.clear()
         self._event_thread = threading.Thread(target=self._event_loop, daemon=True)
@@ -104,6 +112,10 @@ class HotkeyManager:
             norm = self._norm(key_name)
             if norm in ("left", "right"):
                 return self._pressed.get(norm, False)
+            if norm in self._GENERIC_VARIANTS:
+                if self._key_down.get(norm, False):
+                    return True
+                return any(self._key_down.get(v, False) for v in self._GENERIC_VARIANTS[norm])
             return self._key_down.get(norm, False)
 
     def spawn_if_needed(self, hotkey_id: str, run_fn: Callable[[threading.Event], None]) -> None:
@@ -135,7 +147,26 @@ class HotkeyManager:
         return wait_ms_cancel(ms, lambda: stop_ev.is_set() or (not self.is_pressed(key_name)) or (not self.is_context_enabled()))
 
     def _norm(self, key_name: str) -> str:
-        return key_name.strip().lower()
+        norm = key_name.strip().lower()
+        # Shifted glyph for the same physical OEM_3 key
+        if norm == "~":
+            return "`"
+        return norm
+
+    def _expand_bound_key(self, norm: str) -> set[str]:
+        keys = {norm}
+        variants = self._GENERIC_VARIANTS.get(norm)
+        if variants:
+            keys.update(variants)
+        return keys
+
+    def _match_key(self, binding_norm: str, event_norm: str) -> bool:
+        if binding_norm == event_norm:
+            return True
+        variants = self._GENERIC_VARIANTS.get(binding_norm)
+        if variants and event_norm in variants:
+            return True
+        return False
 
     def _set_pressed(self, key_name: str, down: bool) -> None:
         with self._pressed_lock:
@@ -152,11 +183,12 @@ class HotkeyManager:
         return False
 
     def _maybe_trigger(self, name: str) -> None:
-        norm = self._norm(name)
+        event_norm = self._norm(name)
         for hk in self._defs.values():
             if not hk.is_enabled:
                 continue
-            if self._norm(hk.key_name) != norm:
+            binding_norm = self._norm(hk.key_name)
+            if not self._match_key(binding_norm, event_norm):
                 continue
             ctx = self.is_context_enabled()
             if not ctx:
@@ -180,7 +212,12 @@ class HotkeyManager:
             self._maybe_trigger(name)
 
     def _refresh_bound_keys(self) -> None:
-        self._bound_keys_cache = {self._norm(hk.key_name) for hk in self._defs.values() if hk.is_enabled}
+        keys: set[str] = set()
+        for hk in self._defs.values():
+            if not hk.is_enabled:
+                continue
+            keys.update(self._expand_bound_key(self._norm(hk.key_name)))
+        self._bound_keys_cache = keys
 
     def _should_block(self, name: str) -> bool:
         if self._binding_cb:

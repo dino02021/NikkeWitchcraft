@@ -22,19 +22,11 @@ class Actions:
                 break
 
     def run_click(self, key_name: str, btn_name: str, hold_ms: int, gap_ms: int, stop_ev: threading.Event) -> None:
-        btn_pressed_name = "left" if btn_name.lower() == "lbutton" else "right"
-        trigger_norm = key_name.strip().lower()
-        self.hk.log.event(
-            "ACT",
-            "Click",
-            "pre",
-            f"btn_pressed_name={btn_pressed_name} btn_name={btn_name} trigger={trigger_norm}",
-        )
         released_any = False
-        if self.hk.is_pressed("left") and trigger_norm != "left":
+        if self.hk.is_pressed("left"):
             self._release_click("LButton")
             released_any = True
-        if self.hk.is_pressed("right") and trigger_norm != "right":
+        if self.hk.is_pressed("right"):
             self._release_click("RButton")
             released_any = True
         if released_any:

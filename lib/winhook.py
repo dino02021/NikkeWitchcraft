@@ -89,33 +89,139 @@ class HookState:
         self._stop = threading.Event()
 
 
+VK_NAME_MAP: dict[int, str] = {
+    # 1) System / control
+    0x03: "cancel",
+    0x08: "backspace",
+    0x09: "tab",
+    0x0C: "clear",
+    0x0D: "enter",
+    0x10: "shift",
+    0x11: "ctrl",
+    0x12: "alt",
+    0x13: "pause",
+    0x14: "capslock",
+    0x15: "ime_kana",
+    0x17: "ime_junja",
+    0x18: "ime_final",
+    0x19: "ime_hanja",
+    0x1B: "esc",
+    0x1C: "ime_convert",
+    0x1D: "ime_nonconvert",
+    0x1E: "ime_accept",
+    0x1F: "ime_modechange",
+    0x20: "space",
+    0x29: "select",
+    0x2A: "print",
+    0x2B: "execute",
+    0x2F: "help",
+    # Left/right modifiers (distinct names)
+    0xA0: "lshift",  # VK_LSHIFT
+    0xA1: "rshift",  # VK_RSHIFT
+    0xA2: "lctrl",   # VK_LCONTROL
+    0xA3: "rctrl",   # VK_RCONTROL
+    0xA4: "lalt",    # VK_LMENU
+    0xA5: "ralt",    # VK_RMENU
+    # 2) Navigation / edit
+    0x21: "pageup",
+    0x22: "pagedown",
+    0x23: "end",
+    0x24: "home",
+    0x25: "left",
+    0x26: "up",
+    0x27: "right",
+    0x28: "down",
+    0x2C: "printscreen",
+    0x2D: "insert",
+    0x2E: "delete",
+    # 4) Windows keys / apps
+    0x5B: "lcmd",
+    0x5C: "rcmd",
+    0x5D: "apps",
+    0x5F: "sleep",
+    # 5) Numpad operators
+    0x6A: "num*",
+    0x6B: "num+",
+    0x6C: "numsep",  # VK_SEPARATOR
+    0x6D: "num-",
+    0x6E: "num.",
+    0x6F: "num/",
+    # 7) Lock keys
+    0x90: "numlock",
+    0x91: "scrolllock",
+    # 9) Browser / media / launch
+    0xA6: "browser_back",
+    0xA7: "browser_forward",
+    0xA8: "browser_refresh",
+    0xA9: "browser_stop",
+    0xAA: "browser_search",
+    0xAB: "browser_favorites",
+    0xAC: "browser_home",
+    0xAD: "volume_mute",
+    0xAE: "volume_down",
+    0xAF: "volume_up",
+    0xB0: "media_next",
+    0xB1: "media_prev",
+    0xB2: "media_stop",
+    0xB3: "media_play_pause",
+    0xB4: "launch_mail",
+    0xB5: "launch_media",
+    0xB6: "launch_app1",
+    0xB7: "launch_app2",
+    # 8) OEM symbols (US layout names)
+    0xBA: ";",   # VK_OEM_1
+    0xBB: "=",   # VK_OEM_PLUS
+    0xBC: ",",   # VK_OEM_COMMA
+    0xBD: "-",   # VK_OEM_MINUS
+    0xBE: ".",   # VK_OEM_PERIOD
+    0xBF: "/",   # VK_OEM_2
+    0xC0: "`",   # VK_OEM_3 (`~ key)
+    0xDB: "[",   # VK_OEM_4
+    0xDC: "\\",  # VK_OEM_5
+    0xDD: "]",   # VK_OEM_6
+    0xDE: "'",   # VK_OEM_7
+    0xDF: "oem_8",
+    0xE1: "oem_ax",
+    0xE2: "oem_102",
+    0xE5: "processkey",
+    0xE7: "packet",
+    0xE9: "oem_reset",
+    0xEA: "oem_jump",
+    0xEB: "oem_pa1",
+    0xEC: "oem_pa2",
+    0xED: "oem_pa3",
+    0xEE: "oem_wsctrl",
+    0xEF: "oem_cusel",
+    0xF0: "oem_attn",
+    0xF1: "oem_finish",
+    0xF2: "oem_copy",
+    0xF3: "oem_auto",
+    0xF4: "oem_enlw",
+    0xF5: "oem_backtab",
+    0xF6: "attn",
+    0xF7: "crsel",
+    0xF8: "exsel",
+    0xF9: "ereof",
+    0xFA: "play",
+    0xFB: "zoom",
+    0xFD: "pa1",
+    0xFE: "oem_clear",
+}
+
+# 3) Main alnum area
+VK_NAME_MAP.update({vk: chr(vk) for vk in range(0x30, 0x3A)})
+VK_NAME_MAP.update({vk: chr(vk + 32) for vk in range(0x41, 0x5B)})
+
+# 5) Numpad digits
+VK_NAME_MAP.update({vk: f"num{vk - 0x60}" for vk in range(0x60, 0x6A)})
+
+# 6) Function keys
+VK_NAME_MAP.update({vk: f"f{vk - 0x6F}" for vk in range(0x70, 0x88)})
+
+
 def _vk_to_name(vk: int) -> str | None:
-    # Map common VKs to names used in config
-    if 0x41 <= vk <= 0x5A:
-        return chr(vk + 32)
-    if 0x30 <= vk <= 0x39:
-        return chr(vk)
-    if vk == 0x1B:
-        return "esc"
-    if vk == 0x08:
-        return "backspace"
-    if vk == 0x09:
-        return "tab"
-    if vk == 0x0D:
-        return "enter"
-    if vk == 0x20:
-        return "space"
-    if vk == 0x10:
-        return "shift"
-    if vk == 0x11:
-        return "ctrl"
-    if vk == 0x12:
-        return "alt"
-    if vk == 0x5B:
-        return "cmd"
-    if 0x70 <= vk <= 0x87:
-        return f"f{vk - 0x6F}"
-    return None
+    # Unknown VK still returns a stable name so it can be bound.
+    return VK_NAME_MAP.get(vk) or f"vk_{vk:02x}"
 
 
 def _mouse_name(msg: int, mouseData: int) -> str | None:

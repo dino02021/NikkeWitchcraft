@@ -1,110 +1,68 @@
 ﻿# NikkeWitchcraft 規格
 
-> 本文件定義功能與開發規範，所有新增/修改請依此執行。
+> 本文件只保留長期穩定的開發規則與設計原則。  
+> 容易變動的實作細節請寫到 `docs/`。
 
 ## 目標與範圍
-- 以 Python 重構 Nikke 小工具，功能等效於 AHK 版本。
-- Windows 10 / 11 可用。
-- 多熱鍵可同時執行，互不排隊、不搶占。
-- 以低負擔為目標，計時精度優先。
+- 使用 Python 實作 Nikke 小工具，提供可維護的模組化架構。
+- 平台限定 Windows 10/11。
+- 支援多熱鍵並行執行，不採排隊/搶占模型。
+- 在可接受 CPU 負擔下維持操作時序精度。
 
-## 設定與檔案
-- 設定資料夾：`%USERPROFILE%\Documents\NikkeWitchcraftSettings`
-- 設定檔：`NikkeWitchcraftSettings.ini`
-- 日誌：`NikkeWitchcraftDebug.log`
+## 版本與命名
+- 版本號定義於 `lib/config.py` 的 `APP_VERSION`。
+- 主視窗標題由 `APP_TITLE` 組成，格式：`NikkeWitchcraft v<版本>`。
+- 功能命名使用一致代號（例如 `DSpam`, `ClickSeq1`, `Jitter`），避免混用舊名。
 
-### 設定項目
-- 連點延遲
-  - Click1_HoldMs, Click1_GapMs
-  - Click2_HoldMs, Click2_GapMs
-  - Click3_HoldMs, Click3_GapMs
-  - KeySpamDelayMs
-- 綁定鍵
-  - DSpam, SSpam, ASpam
-  - ClickSeq1, ClickSeq2, ClickSeq3
-  - Panic
-- 啟用狀態
-  - DSpam, SSpam, ASpam
-  - ClickSeq1, ClickSeq2, ClickSeq3
-  - Panic
-- 連點按鍵方向
-  - ClickSeq1_Button, ClickSeq2_Button, ClickSeq3_Button
-- 系統選項
-  - AutoStart
-  - CursorLock
-  - GlobalHotkeys
+## 設定與資料檔
+- 設定根目錄：`%USERPROFILE%\\Documents\\NikkeWitchcraftSettings`。
+- 設定與日誌檔路徑由 `ConfigStore` 與 `Logger` 統一管理。
+- 新增設定項目時必須同時更新：
+- `Settings` dataclass
+- `ConfigStore.load/save`
+- 對應 UI 與行為層讀寫
 
-## 功能說明
-### D/S/A 連點
-- 由綁定鍵觸發 D/S/A 按鍵連點。
-- 透過 `KeySpamDelayMs` 控制節奏。
+## 輸入與執行模型
+- 熱鍵監聽、動作執行、UI 更新必須解耦。
+- Hook 回呼採 fail-open 原則：異常時優先放行，避免全域輸入鎖死。
+- 只有符合條件的綁定鍵可以被阻斷；非綁定輸入預設放行。
+- 背景執行緒不得直接操作 Tk 元件，必須經主執行緒排程（例如 `after`）。
 
-### 連點 1/2/3
-- 綁定鍵觸發滑鼠左/右鍵連點。
-- 進入循環前若目標滑鼠鍵已按住，先放開並休息一次 gap。
-- 進入循環後：hold → gap 交替。
-
-### 逃脫鍵（Panic）
-- 立即停止所有連點與熱鍵狀態。
-
-## 前景/全域邏輯
-- 僅檢查 `nikke.exe` 是否前景。
-- UI 只顯示「遊戲狀態：前景/背景」。
-- 非前景時：熱鍵穿透；前景時：阻斷原生輸入。
-- 啟用全域熱鍵時：全域阻斷。
-
-## 游標鎖定
-- 啟用後，使用 WinAPI `ClipCursor` 將游標限制在遊戲視窗範圍。
-- 解鎖時立即恢復。
+## 前景與阻斷規則
+- 前景判定以 `nikke.exe` 為唯一依據。
+- 是否阻斷原生輸入由遊戲前景與全域熱鍵設定共同決定。
+- 任何改動需保證不會出現全鍵鼠失效。
 
 ## UI 規範
-- 視窗標題：`NikkeWitchcraft v1.0`。
-## 版本
-- 版本定義：`APP_VERSION`（`lib/config.py`）。
-- 標題來源：`APP_TITLE`（`lib/config.py`）。
-- 佈局順序：由上到下、由左到右。
-- 區塊順序
-  - D/S/A 連點
-  - 連點 1/2/3（含左/右切換）
-  - 逃脫鍵
-  - 延遲設定 + 套用延遲
-  - 連點次/秒與超速提示
-  - 自動啟動 / 游標鎖定 / 全域熱鍵
-  - 狀態列
+- UI 建立優先使用 `lib/gui/layout.py` 的工廠方法，避免直接散寫 `ttk` 元件。
+- `ui_constants.py` 是間距與排版常數唯一來源。
+- 區塊排列遵循由上到下、由左到右；同類互動元件需維持一致間距與狀態語義。
+- 禁用狀態必須有視覺回饋（控件禁用、文字變灰、警示色同步調整）。
 
-## 計時與等待
-- 以 QPC/perf_counter 為基準。
-- 分段等待策略
-  - remaining >= 16ms → WaitMsg(14)
-  - remaining >= 2ms → WaitMsg(1)
-  - else → WaitMsg(0)
-
-## 命名與程式風格
-- 檔案一律 UTF-8；中文正常顯示。
-- bool 以 `is_` 開頭；對外函式置頂，對內函式 `_` 開頭且置底。
-- 對內函式不得巢狀在對外函式內，統一拉到檔案下方維護。
-- if 盡量採用反向條件提前跳出，避免多層巢狀縮排。
+## 程式風格
+- 檔案編碼統一 UTF-8。
+- `bool` 命名以 `is_` 開頭。
+- 對外方法置前，對內輔助方法以 `_` 開頭並集中在類別後段。
+- 優先使用提前返回降低巢狀層級。
 - 對話框統一使用 `create_dialog(...)`，必須 `grab_set + transient + close_dialog`。
 
-## 測試
-- 最少執行 `python -m py_compile` 於修改檔以確認語法正確。
+## 測試與驗證
+- 最低要求：修改後可通過 `python -m py_compile`。
+- 影響輸入層或 Hook 的改動，需額外做手動驗證：
+- 前景/背景切換
+- 綁定鍵阻斷與穿透
+- 啟停與關閉流程
 
-## UI 常數（lib/gui/ui_constants.py）
-- 所有 padding / 間距集中在此檔；數值以 DEFAULT_PAD 為基準。
-- 分類：FRAME/LIST、按鈕框與 Grid、按鈕間距、訊息區、標籤區。
+## 文件分工
+- 本文件：原則與規範。
+- `docs/hotkey-mapping.md`：鍵名/掃碼/映射等可變動細節。
+- `docs/runtime-behavior.md`：前景判定、阻斷策略、關閉順序、異常保護等行為細節。
+- `CHANGELOG.md`：版本差異與發佈內容。
 
-## 套用原則
-- 所有 UI 最外層一定使用 `create_frame` 包裹。
-- 只要有 Listbox，外層 frame 就一定要設定 `rowconfigure(0, weight=1)` 讓列表撐滿。
-- Listbox 每列文字左側加一個空白字元；若有「需從列表選擇」的情境，雙擊列表等同「套用選擇」。
-- 最下方預設一個訊息 Label：預設空字串；錯誤紅色、成功綠色。
-- entry 與 entry_label 外層一定使用 `create_entry_frame`。
-- 相連的 entry 必須共用同一個 `create_entry_frame`，避免重複 padding。
-- btn 外層一定使用 `create_btn_frame`。
-- 輸入框/標籤：用 ENTRY_LABEL_PADX / ENTRY_LABEL_PADY、ENTRY_PADX / ENTRY_PADY。
-- ComboBox：用 CB_PADX / CB_PADY。
-- 列表：用 LIST_PADX / LIST_PADY。
-- 訊息 Label：用 MSG_PADX / MSG_PADY。
-- 按鈕列：外框用 BTN_FRAME_PAD，Grid 用 BTN_GRID_PADX/BTN_GRID_PADY；多顆按鈕用 BTN_PADX_BETWEEN，最後一顆用 BTN_PADX_LAST。
-- UI 的建立必須按照「左到右、上到下」的順序。
-- 禁止使用 `columnspan`。
+## 文件補全規則（人工同步）
+- 文件是規則的一部分：修改程式碼後，必須同步更新 `docs/`，使其與「目前版本實作」一致。
+- 特別是修改以下內容時，必須補齊對應文件：
+- `lib/winhook.py`（鍵名對應、左右鍵命名、未知鍵策略）=> `docs/hotkey-mapping.md`
+- `lib/hotkeys.py`（正規化/相容規則、阻斷與觸發條件）=> `docs/hotkey-mapping.md`、`docs/runtime-behavior.md`
+- 前景判定/阻斷策略/關閉順序 => `docs/runtime-behavior.md`
+- 文件內容以「使用者能照著理解目前行為」為準，不要求列出所有 VK 的完整清單。
