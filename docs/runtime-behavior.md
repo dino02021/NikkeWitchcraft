@@ -54,6 +54,12 @@ hook callback 不直接操作 Tk 元件。進入綁定模式後，hook thread �
 
 `General.HotkeysPaused` 預設關閉。啟用時，按鍵綁定區的熱鍵會停用並從阻斷集合移除，因此原始按鍵會正常穿透。PRESET 2 不受此設定影響，仍由 `General.RhythmPreset2` 獨立控制。
 
+## 啟動參數
+
+程式支援以下命令列參數：
+
+- `--minimized`：使用此參數啟動時，主視窗會直接隱藏（縮小至系統托盤），不顯示主界面。用戶可點擊系統托盤圖示或右鍵選單中的「開啟面板」來還原並顯示主視窗。
+
 ## 單一實例
 
 新實例啟動時，會先透過每位使用者獨立的 named shutdown event 通知舊實例正常關閉。新版本實例會在 Tk main thread 輪詢此 event，收到後走正常 shutdown 流程。
