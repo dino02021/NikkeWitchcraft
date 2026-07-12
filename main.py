@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 import ctypes
@@ -179,6 +179,14 @@ def _context_state(settings: Settings) -> dict[str, int | str | bool]:
 
 def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions: Actions, log: Logger) -> tuple[tk.Tk, AppUI]:
     try:
+        # Enable High DPI awareness to prevent window and text blurriness under Windows display scaling
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
         root = tk.Tk()
         root.report_callback_exception = lambda exc, val, tb: log.event("SYS", "UI", "exception", f"err={val}")
         ui = AppUI(root, settings, store, hk, actions, log, on_logging_changed=partial(_set_logging_enabled, log))
