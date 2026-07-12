@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 import ctypes
@@ -14,6 +14,7 @@ from lib.log import Logger, session_log_path
 from lib.hotkeys import HotkeyManager, HotkeyDef
 from lib.actions import Actions
 from lib.gui.ui import AppUI
+from lib.autostart import enable_autostart
 from lib import winapi
 from PIL import Image, ImageDraw
 import pystray
@@ -75,6 +76,7 @@ def main() -> None:
     ensure_admin(log)
     _signal_existing_instances(log)
     _terminate_existing_instances(log)
+    _sync_autostart_setting(settings, store, log)
     winapi.time_begin_period(1)
     log.event("SYS", "timeBeginPeriod", "init", "ok=1")
 
@@ -123,7 +125,8 @@ def main() -> None:
 
     hk.start()
 
-    root, ui = _init_ui(settings, store, hk, actions, log)
+    minimized = "--minimized" in sys.argv
+    root, ui = _init_ui(settings, store, hk, actions, log, minimized=minimized)
     _install_foreground_hook(root, ui, log, hk, settings)
     _install_shutdown_event(root, log)
 
@@ -177,14 +180,36 @@ def _context_state(settings: Settings) -> dict[str, int | str | bool]:
     }
 
 
-def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions: Actions, log: Logger) -> tuple[tk.Tk, AppUI]:
+def _sync_autostart_setting(settings: Settings, store: ConfigStore, log: Logger) -> None:
+    if not settings.is_auto_start or settings.is_autostart_task_migrated:
+        return
     try:
+        enable_autostart()
+        settings.is_autostart_task_migrated = True
+        store.save(settings)
+        log.event("SYS", "AutoStart", "sync", "ok=1")
+    except Exception as exc:
+        log.event("SYS", "AutoStart", "syncFail", f"err={exc}")
+
+
+def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions: Actions, log: Logger, minimized: bool = False) -> tuple[tk.Tk, AppUI]:
+    try:
+        # Enable High DPI awareness to prevent window and text blurriness under Windows display scaling
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
         root = tk.Tk()
+        root.withdraw()
         root.report_callback_exception = lambda exc, val, tb: log.event("SYS", "UI", "exception", f"err={val}")
         ui = AppUI(root, settings, store, hk, actions, log, on_logging_changed=partial(_set_logging_enabled, log))
-        log.event("SYS", "UI", "init", "ok=1")
+        log.event("SYS", "UI", "init", f"ok=1 minimized={int(minimized)}")
         root.update_idletasks()
-        _show_ui(root)
+        if not minimized:
+            _show_ui(root)
         return root, ui
     except Exception as exc:
         log.event("SYS", "UI", "initFail", f"err={exc}")

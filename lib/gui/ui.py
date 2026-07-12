@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import tkinter as tk
 import sys
@@ -137,7 +137,7 @@ class AppUI:
         create_entry_label(opt_frame, "其他設定：", row=0, column=0)
         other_frame = create_entry_frame(opt_frame, row=1, column=0)
         self.chk_autostart = tk.IntVar()
-        create_checkbutton(other_frame, "開機時自動啟動", self.chk_autostart, self._toggle_autostart, row=0, column=0)
+        create_checkbutton(other_frame, "開機時自動啟動 (縮小至工具列)", self.chk_autostart, self._toggle_autostart, row=0, column=0)
         self.chk_minimize_to_tray = tk.IntVar()
         create_checkbutton(other_frame, "縮小至工具列", self.chk_minimize_to_tray, self._toggle_minimize_to_tray, row=1, column=0)
         self.chk_record_log = tk.IntVar()
@@ -381,8 +381,10 @@ class AppUI:
         try:
             if want_enable:
                 enable_autostart()
+                self.s.is_autostart_task_migrated = True
             else:
                 disable_autostart()
+                self.s.is_autostart_task_migrated = False
             self.s.is_auto_start = want_enable
             self.store.save(self.s)
         except Exception as exc:
