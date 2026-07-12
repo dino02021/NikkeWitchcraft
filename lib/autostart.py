@@ -1,27 +1,68 @@
 from __future__ import annotations
 
 from pathlib import Path
-import ctypes
-from ctypes import wintypes
 import os
 import subprocess
 import sys
 
+TASK_NAME = "NikkeWitchcraftAutostart"
+
 
 def enable_autostart(target_path: Path | None = None) -> None:
-    link = _startup_link_path()
-    link.parent.mkdir(parents=True, exist_ok=True)
+    # 1. 嘗試清理舊版本的啟動資料夾捷徑以避免重複啟動
+    try:
+        old_link = _startup_link_path()
+        if old_link.exists():
+            old_link.unlink()
+    except Exception:
+        pass
+
+    # 2. 解析執行檔與啟動參數
     resolved_target, args, work_dir = _resolve_launch_target(target_path)
-    _create_shortcut(link, resolved_target, work_dir, args)
-    if not link.exists():
-        raise RuntimeError(f"shortcut not created: {link}")
+    
+    # 自動啟動時，加上 --minimized 參數使其開機直接縮小至系統托盤
+    if args:
+        task_args = f"{args} --minimized"
+    else:
+        task_args = "--minimized"
+
+    # 3. 註冊工作排程器任務
+    try:
+        _create_task_powershell(TASK_NAME, resolved_target, task_args)
+    except Exception as e:
+        # 如果 PowerShell 失敗，fallback 使用 Windows 內建的 schtasks
+        try:
+            _create_task_schtasks(TASK_NAME, resolved_target, task_args)
+        except Exception as exc:
+            raise RuntimeError(f"無法建立工作排程器任務：{exc}") from exc
 
 
 def disable_autostart() -> None:
-    link = _startup_link_path()
-    if not link.exists():
-        return
-    link.unlink()
+    # 1. 嘗試清理舊版本的啟動資料夾捷徑
+    try:
+        old_link = _startup_link_path()
+        if old_link.exists():
+            old_link.unlink()
+    except Exception:
+        pass
+
+    # 2. 刪除工作排程器任務
+    cmd = [
+        "schtasks",
+        "/delete",
+        "/tn", TASK_NAME,
+        "/f"
+    ]
+    try:
+        subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+    except Exception:
+        pass
 
 
 def _startup_link_path() -> Path:
@@ -60,159 +101,54 @@ def _resolve_launch_target(target_path: Path | None) -> tuple[Path, str, Path]:
     return exe, args, script.parent
 
 
-def _create_shortcut(link_path: Path, target_path: Path, work_dir: Path, arguments: str = "") -> None:
-    try:
-        _create_shortcut_com(link_path, target_path, work_dir, arguments)
-    except Exception:
-        pass
-    if link_path.exists():
-        return
-    _create_shortcut_powershell(link_path, target_path, work_dir, arguments)
-
-
-def _create_shortcut_com(link_path: Path, target_path: Path, work_dir: Path, arguments: str = "") -> None:
-    ole32 = ctypes.WinDLL("ole32", use_last_error=True)
-    ole32.CoInitialize.argtypes = [ctypes.c_void_p]
-    ole32.CoInitialize.restype = ctypes.c_long
-    ole32.CoUninitialize.argtypes = []
-    ole32.CoUninitialize.restype = None
-    ole32.CoCreateInstance.argtypes = [
-        ctypes.POINTER(GUID),
-        ctypes.c_void_p,
-        wintypes.DWORD,
-        ctypes.POINTER(GUID),
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    ole32.CoCreateInstance.restype = ctypes.c_long
-
-    hr = ole32.CoInitialize(None)
-    if hr < 0:
-        return
-    try:
-        psl = ctypes.c_void_p()
-        hr = ole32.CoCreateInstance(
-            ctypes.byref(CLSID_ShellLink),
-            None,
-            1,
-            ctypes.byref(IID_IShellLinkW),
-            ctypes.byref(psl),
-        )
-        if hr < 0 or not psl:
-            raise OSError(f"CoCreateInstance failed: hr={hr}")
-        try:
-            link = ctypes.cast(psl, ctypes.POINTER(IShellLinkW))
-            if link.contents.lpVtbl.contents.SetPath(link, str(target_path)) < 0:
-                raise OSError("SetPath failed")
-            if link.contents.lpVtbl.contents.SetWorkingDirectory(link, str(work_dir)) < 0:
-                raise OSError("SetWorkingDirectory failed")
-            if arguments:
-                if link.contents.lpVtbl.contents.SetArguments(link, arguments) < 0:
-                    raise OSError("SetArguments failed")
-            ppf = ctypes.c_void_p()
-            hr = link.contents.lpVtbl.contents.QueryInterface(
-                link, ctypes.byref(IID_IPersistFile), ctypes.byref(ppf)
-            )
-            if hr < 0 or not ppf:
-                raise OSError(f"QueryInterface(IPersistFile) failed: hr={hr}")
-            try:
-                pf = ctypes.cast(ppf, ctypes.POINTER(IPersistFile))
-                if pf.contents.lpVtbl.contents.Save(pf, str(link_path), True) < 0:
-                    raise OSError("IPersistFile.Save failed")
-            finally:
-                pf.contents.lpVtbl.contents.Release(pf)
-        finally:
-            link.contents.lpVtbl.contents.Release(link)
-    finally:
-        ole32.CoUninitialize()
-
-
-def _create_shortcut_powershell(link_path: Path, target_path: Path, work_dir: Path, arguments: str = "") -> None:
+def _create_task_powershell(task_name: str, target_path: Path, arguments: str) -> None:
     def esc(text: str) -> str:
         return text.replace("'", "''")
 
-    ps = (
-        "$W = New-Object -ComObject WScript.Shell; "
-        f"$S = $W.CreateShortcut('{esc(str(link_path))}'); "
-        f"$S.TargetPath = '{esc(str(target_path))}'; "
-        f"$S.WorkingDirectory = '{esc(str(work_dir))}'; "
-        f"$S.Arguments = '{esc(arguments)}'; "
-        "$S.Save()"
+    username = os.environ.get("USERNAME", "")
+    userdomain = os.environ.get("USERDOMAIN", "")
+    if username and userdomain:
+        user_id = f"{esc(userdomain)}\\{esc(username)}"
+        user_trigger = f"-User '{user_id}'"
+        user_principal = f"-UserId '{user_id}' -LogonType Interactive"
+    else:
+        user_trigger = ""
+        user_principal = ""
+
+    # 建立登入時自動啟動、最高權限且取消筆電電池限制的排程任務
+    ps_script = (
+        f"$action = New-ScheduledTaskAction -Execute '{esc(str(target_path))}' -Argument '{esc(arguments)}'; "
+        f"$trigger = New-ScheduledTaskTrigger -AtLogOn {user_trigger}; "
+        f"$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+        f"$principal = New-ScheduledTaskPrincipal -RunLevel Highest {user_principal}; "
+        f"Register-ScheduledTask -TaskName '{esc(task_name)}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force"
     )
+    
     subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", ps],
+        ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
         check=True,
+        capture_output=True,
+        text=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
 
-class GUID(ctypes.Structure):
-    _fields_ = [
-        ("Data1", wintypes.DWORD),
-        ("Data2", wintypes.WORD),
-        ("Data3", wintypes.WORD),
-        ("Data4", wintypes.BYTE * 8),
+def _create_task_schtasks(task_name: str, target_path: Path, arguments: str) -> None:
+    exe_str = str(target_path)
+    task_run_cmd = f'"{exe_str}" {arguments}'
+    cmd = [
+        "schtasks",
+        "/create",
+        "/tn", task_name,
+        "/tr", task_run_cmd,
+        "/sc", "onlogon",
+        "/rl", "highest",
+        "/f"
     ]
-
-
-def _guid(s: str) -> GUID:
-    import uuid
-
-    u = uuid.UUID(s)
-    data4 = (wintypes.BYTE * 8).from_buffer_copy(u.bytes[8:])
-    return GUID(u.time_low, u.time_mid, u.time_hi_version, data4)
-
-
-CLSID_ShellLink = _guid("00021401-0000-0000-C000-000000000046")
-IID_IShellLinkW = _guid("000214F9-0000-0000-C000-000000000046")
-IID_IPersistFile = _guid("0000010b-0000-0000-C000-000000000046")
-
-class IShellLinkW(ctypes.Structure):
-    pass
-
-class IPersistFile(ctypes.Structure):
-    pass
-
-
-
-class IShellLinkWVtbl(ctypes.Structure):
-    _fields_ = [
-        ("QueryInterface", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IShellLinkW), ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))),
-        ("AddRef", ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.POINTER(IShellLinkW))),
-        ("Release", ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.POINTER(IShellLinkW))),
-        ("GetPath", ctypes.c_void_p),
-        ("GetIDList", ctypes.c_void_p),
-        ("SetIDList", ctypes.c_void_p),
-        ("GetDescription", ctypes.c_void_p),
-        ("SetDescription", ctypes.c_void_p),
-        ("GetWorkingDirectory", ctypes.c_void_p),
-        ("SetWorkingDirectory", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IShellLinkW), wintypes.LPCWSTR)),
-        ("GetArguments", ctypes.c_void_p),
-        ("SetArguments", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IShellLinkW), wintypes.LPCWSTR)),
-        ("GetHotkey", ctypes.c_void_p),
-        ("SetHotkey", ctypes.c_void_p),
-        ("GetShowCmd", ctypes.c_void_p),
-        ("SetShowCmd", ctypes.c_void_p),
-        ("GetIconLocation", ctypes.c_void_p),
-        ("SetIconLocation", ctypes.c_void_p),
-        ("SetRelativePath", ctypes.c_void_p),
-        ("Resolve", ctypes.c_void_p),
-        ("SetPath", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IShellLinkW), wintypes.LPCWSTR)),
-    ]
-
-
-class IPersistFileVtbl(ctypes.Structure):
-    _fields_ = [
-        ("QueryInterface", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IPersistFile), ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))),
-        ("AddRef", ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.POINTER(IPersistFile))),
-        ("Release", ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.POINTER(IPersistFile))),
-        ("GetClassID", ctypes.c_void_p),
-        ("IsDirty", ctypes.c_void_p),
-        ("Load", ctypes.c_void_p),
-        ("Save", ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.POINTER(IPersistFile), wintypes.LPCWSTR, wintypes.BOOL)),
-        ("SaveCompleted", ctypes.c_void_p),
-        ("GetCurFile", ctypes.c_void_p),
-    ]
-
-
-IShellLinkW._fields_ = [("lpVtbl", ctypes.POINTER(IShellLinkWVtbl))]
-IPersistFile._fields_ = [("lpVtbl", ctypes.POINTER(IPersistFileVtbl))]
+    subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )

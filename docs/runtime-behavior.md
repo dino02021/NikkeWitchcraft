@@ -60,6 +60,14 @@ hook callback 不直接操作 Tk 元件。進入綁定模式後，hook thread �
 
 - `--minimized`：使用此參數啟動時，主視窗會直接隱藏（縮小至系統托盤），不顯示主界面。用戶可點擊系統托盤圖示或右鍵選單中的「開啟面板」來還原並顯示主視窗。
 
+## 自動啟動
+
+「開機自啟」設定啟用時，程式會透過 Windows 工作排程器（Task Scheduler）註冊一個名為 `NikkeWitchcraftAutostart` 的任務：
+- **觸發程序**：於設定自啟動的當前使用者登入時（AtLogOn -User）啟動，不會影響其他登入這台電腦的使用者。
+- **權限層級**：以最高權限（Highest Privilege）執行。這樣可確保程式在開機時直接以系統管理員權限運行，避免 Windows UAC 提權彈窗。
+- **啟動參數**：會自動帶上 `--minimized` 參數，以便程式在開機登入後靜默啟動於系統托盤。
+- **相容性與清理**：開啟或關閉自啟設定時，會自動檢查並清理舊版本可能殘留在使用者啟動資料夾（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`）的 `NikkeWitchcraftStarter.lnk` 捷徑檔案。
+
 ## 單一實例
 
 新實例啟動時，會先透過每位使用者獨立的 named shutdown event 通知舊實例正常關閉。新版本實例會在 Tk main thread 輪詢此 event，收到後走正常 shutdown 流程。
