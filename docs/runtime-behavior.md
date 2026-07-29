@@ -13,6 +13,14 @@
 
 同一套情境判斷會用在熱鍵觸發、按鍵阻斷、PRESET 2、worker 停止條件與 context 診斷 log。切換全域熱鍵時，阻斷狀態必須立即更新。
 
+前景狀態由 Windows `EVENT_SYSTEM_FOREGROUND` 主動通知，不使用固定間隔輪詢。WinEvent hook 在獨立訊息執行緒接收事件，只能寫入 queue 並透過 `root.after(0, ...)` 排入建立 Tk interpreter 的 main thread；UI、熱鍵情境與游標狀態只能在 main thread 更新。Hook 必須在 Tk mainloop 開始後建立，shutdown 開始後不得再排入 Tk。
+
+## 滑鼠鎖定
+
+`General.CursorLock` 啟用時，只在 `nikke.exe` 位於前景且在主螢幕時，將游標限制在遊戲 client rect。前景切換以及妮姬視窗移動或縮放皆由 Windows event 通知，不使用固定間隔輪詢。
+
+程式只追蹤自己成功設定的限制範圍。離開妮姬、取消設定或結束程式時，只有在 Windows 目前的限制範圍仍等於程式最後設定的範圍，且不等於新前景視窗範圍時才解除一次；若其他程式已設定不同範圍，或新前景可能使用相同範圍，必須保留且不再操作。其他遊戲維持前景期間不得呼叫 `ClipCursor`。
+
 ## 按鍵阻斷
 
 hook 只允許阻斷「目前啟用、已綁定、且不是 pass-through」的按鍵。停用、暫停或未綁定的按鍵必須正常穿透。

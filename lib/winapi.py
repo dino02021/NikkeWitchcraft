@@ -13,7 +13,10 @@ _send_input_lock = threading.Lock()
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 EVENT_SYSTEM_FOREGROUND = 0x0003
+EVENT_OBJECT_LOCATIONCHANGE = 0x800B
 WINEVENT_OUTOFCONTEXT = 0x0000
+OBJID_WINDOW = 0x00000000
+CHILDID_SELF = 0
 MONITOR_DEFAULTTONEAREST = 0x00000002
 MONITORINFOF_PRIMARY = 0x00000001
 
@@ -38,6 +41,8 @@ user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 user32.GetClientRect.restype = wintypes.BOOL
 user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 user32.ClientToScreen.restype = wintypes.BOOL
+user32.GetClipCursor.argtypes = [ctypes.POINTER(wintypes.RECT)]
+user32.GetClipCursor.restype = wintypes.BOOL
 user32.ClipCursor.argtypes = [ctypes.POINTER(wintypes.RECT)]
 user32.ClipCursor.restype = wintypes.BOOL
 user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
@@ -54,6 +59,10 @@ user32.SetWinEventHook.argtypes = [
 user32.SetWinEventHook.restype = wintypes.HANDLE
 user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
 user32.UnhookWinEvent.restype = wintypes.BOOL
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+user32.GetMessageW.restype = wintypes.BOOL
+user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.PostThreadMessageW.restype = wintypes.BOOL
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.c_void_p, ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
 user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
@@ -69,6 +78,8 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
     wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
 ]
 kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+kernel32.GetCurrentThreadId.argtypes = []
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 psapi.GetProcessImageFileNameW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD]
 psapi.GetProcessImageFileNameW.restype = wintypes.DWORD
@@ -120,6 +131,13 @@ def clip_cursor(rect: Rect | None) -> bool:
         return bool(user32.ClipCursor(None))
     r = wintypes.RECT(rect.left, rect.top, rect.right, rect.bottom)
     return bool(user32.ClipCursor(ctypes.byref(r)))
+
+
+def get_clip_cursor() -> Rect | None:
+    rect = wintypes.RECT()
+    if not user32.GetClipCursor(ctypes.byref(rect)):
+        return None
+    return Rect(rect.left, rect.top, rect.right, rect.bottom)
 
 
 class MonitorInfo(ctypes.Structure):
@@ -208,12 +226,12 @@ def time_end_period(ms: int) -> bool:
     return winmm.timeEndPeriod(ms) == 0
 
 
-def set_foreground_event_hook(callback) -> wintypes.HANDLE:
+def _set_win_event_hook(event_min: int, event_max: int, callback) -> tuple[wintypes.HANDLE, WinEventProc]:
     proc = WinEventProc(callback)
     _win_event_procs.append(proc)
     hook = user32.SetWinEventHook(
-        EVENT_SYSTEM_FOREGROUND,
-        EVENT_SYSTEM_FOREGROUND,
+        event_min,
+        event_max,
         0,
         proc,
         0,
@@ -221,6 +239,62 @@ def set_foreground_event_hook(callback) -> wintypes.HANDLE:
         WINEVENT_OUTOFCONTEXT,
     )
     return hook, proc
+
+
+def set_foreground_event_hook(callback) -> tuple[wintypes.HANDLE, WinEventProc]:
+    return _set_win_event_hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, callback)
+
+
+def set_window_location_event_hook(callback) -> tuple[wintypes.HANDLE, WinEventProc]:
+    return _set_win_event_hook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, callback)
+
+
+class WinEventHookState:
+    def __init__(self) -> None:
+        self.foreground_hook = None
+        self.foreground_proc = None
+        self.location_hook = None
+        self.location_proc = None
+        self.foreground_error = 0
+        self.location_error = 0
+        self.thread_id = 0
+        self.ready = threading.Event()
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+
+def start_window_event_hooks(on_foreground, on_location) -> WinEventHookState:
+    state = WinEventHookState()
+
+    def run() -> None:
+        state.thread_id = int(kernel32.GetCurrentThreadId())
+        state.foreground_hook, state.foreground_proc = set_foreground_event_hook(on_foreground)
+        if not state.foreground_hook:
+            state.foreground_error = ctypes.get_last_error()
+        state.location_hook, state.location_proc = set_window_location_event_hook(on_location)
+        if not state.location_hook:
+            state.location_error = ctypes.get_last_error()
+        state.ready.set()
+        message = wintypes.MSG()
+        while not state.stop.is_set() and user32.GetMessageW(ctypes.byref(message), 0, 0, 0) != 0:
+            pass
+        if state.foreground_hook:
+            user32.UnhookWinEvent(state.foreground_hook)
+        if state.location_hook:
+            user32.UnhookWinEvent(state.location_hook)
+
+    state.thread = threading.Thread(target=run, daemon=True)
+    state.thread.start()
+    state.ready.wait(timeout=2.0)
+    return state
+
+
+def stop_window_event_hooks(state: WinEventHookState) -> None:
+    state.stop.set()
+    if state.thread_id:
+        user32.PostThreadMessageW(state.thread_id, 0x0012, 0, 0)
+    if state.thread and state.thread.is_alive():
+        state.thread.join(timeout=2.0)
 
 
 def unhook_win_event(hook: wintypes.HANDLE) -> bool:

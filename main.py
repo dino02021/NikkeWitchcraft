@@ -13,6 +13,7 @@ from lib.config import Settings, ConfigStore, APP_NAME, APP_TITLE
 from lib.log import Logger, session_log_path
 from lib.hotkeys import HotkeyManager, HotkeyDef
 from lib.actions import Actions
+from lib.cursor_lock import CursorLockController
 from lib.gui.ui import AppUI
 from lib.autostart import enable_autostart
 from lib import winapi
@@ -23,12 +24,16 @@ import queue
 import faulthandler
 
 
-_fg_pending = {"fg": 0, "exe": "-", "hwnd": 0, "primary": 0}
-_fg_ui: AppUI | None = None
-_fg_log: Logger | None = None
-_fg_queue: queue.Queue[tuple[int, str, int, int]] = queue.Queue()
 _faulthandler_file = None
-_app_state = {"hk": None, "icon": None, "log": None, "closing": False, "shutdown_event": None}
+_app_state = {
+    "hk": None,
+    "actions": None,
+    "cursor_lock": None,
+    "icon": None,
+    "log": None,
+    "closing": False,
+    "shutdown_event": None,
+}
 
 
 def ensure_admin(log: Logger) -> None:
@@ -87,6 +92,9 @@ def main() -> None:
     )
     _app_state["hk"] = hk
     actions = Actions(settings, hk)
+    _app_state["actions"] = actions
+    cursor_lock = CursorLockController(settings, log)
+    _app_state["cursor_lock"] = cursor_lock
     binding_enabled = not settings.is_hotkeys_paused
 
     hk.define(HotkeyDef("EscMap", settings.key_esc, settings.is_esc_enabled and binding_enabled,
@@ -126,8 +134,8 @@ def main() -> None:
     hk.start()
 
     minimized = "--minimized" in sys.argv
-    root, ui = _init_ui(settings, store, hk, actions, log, minimized=minimized)
-    _install_foreground_hook(root, ui, log, hk, settings)
+    root, ui = _init_ui(settings, store, hk, actions, log, cursor_lock, minimized=minimized)
+    _install_foreground_hook(root, ui, log, hk, settings, cursor_lock)
     _install_shutdown_event(root, log)
 
     tray = pystray.Icon(
@@ -144,7 +152,6 @@ def main() -> None:
 
     root.protocol("WM_DELETE_WINDOW", partial(_close_ui, root, settings))
     tray.run_detached()
-    root.after(200, lambda: _cursor_lock_tick(root, settings))
     root.mainloop()
 
 
@@ -192,7 +199,15 @@ def _sync_autostart_setting(settings: Settings, store: ConfigStore, log: Logger)
         log.event("SYS", "AutoStart", "syncFail", f"err={exc}")
 
 
-def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions: Actions, log: Logger, minimized: bool = False) -> tuple[tk.Tk, AppUI]:
+def _init_ui(
+    settings: Settings,
+    store: ConfigStore,
+    hk: HotkeyManager,
+    actions: Actions,
+    log: Logger,
+    cursor_lock: CursorLockController,
+    minimized: bool = False,
+) -> tuple[tk.Tk, AppUI]:
     try:
         # Enable High DPI awareness to prevent window and text blurriness under Windows display scaling
         try:
@@ -205,7 +220,16 @@ def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions:
         root = tk.Tk()
         root.withdraw()
         root.report_callback_exception = lambda exc, val, tb: log.event("SYS", "UI", "exception", f"err={val}")
-        ui = AppUI(root, settings, store, hk, actions, log, on_logging_changed=partial(_set_logging_enabled, log))
+        ui = AppUI(
+            root,
+            settings,
+            store,
+            hk,
+            actions,
+            log,
+            on_logging_changed=partial(_set_logging_enabled, log),
+            on_cursor_lock_changed=cursor_lock.set_enabled,
+        )
         log.event("SYS", "UI", "init", f"ok=1 minimized={int(minimized)}")
         root.update_idletasks()
         if not minimized:
@@ -216,50 +240,128 @@ def _init_ui(settings: Settings, store: ConfigStore, hk: HotkeyManager, actions:
         raise
 
 
-def _install_foreground_hook(root: tk.Tk, ui: AppUI, log: Logger, hk: HotkeyManager, settings: Settings) -> None:
+def _install_foreground_hook(
+    root: tk.Tk,
+    ui: AppUI,
+    log: Logger,
+    hk: HotkeyManager,
+    settings: Settings,
+    cursor_lock: CursorLockController,
+) -> None:
     state = {"last": None}
-    _install_foreground_pending(root, ui, log, hk, settings)
+    event_queue: queue.SimpleQueue[tuple[str, int, str, int, int]] = queue.SimpleQueue()
+    dispatch_state = {"scheduled": False}
+    dispatch_lock = threading.Lock()
+
+    def drain_events() -> None:
+        with dispatch_lock:
+            dispatch_state["scheduled"] = False
+        latest_location = 0
+        while True:
+            try:
+                kind, fg, exe, hwnd, is_primary = event_queue.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "foreground":
+                _handle_foreground_update(
+                    ui,
+                    log,
+                    hk,
+                    settings,
+                    cursor_lock,
+                    fg,
+                    exe,
+                    hwnd,
+                    is_primary,
+                )
+            elif kind == "location":
+                latest_location = hwnd
+        if latest_location:
+            cursor_lock.on_window_location_changed(latest_location)
+
+    def enqueue_event(kind: str, fg: int, exe: str, hwnd: int, is_primary: int) -> None:
+        if _app_state.get("closing"):
+            return
+        event_queue.put((kind, fg, exe, hwnd, is_primary))
+        with dispatch_lock:
+            if dispatch_state["scheduled"]:
+                return
+            dispatch_state["scheduled"] = True
+        try:
+            root.after(0, drain_events)
+        except Exception as exc:
+            with dispatch_lock:
+                dispatch_state["scheduled"] = False
+            log.event("SYS", "EventDispatcher", "scheduleFail", f"kind={kind} err={exc}")
 
     def on_foreground(hook, event, hwnd, obj_id, child_id, thread_id, time_ms):
         try:
-            if not hwnd:
-                return
-            path = winapi.get_process_image(hwnd)
+            path = winapi.get_process_image(hwnd) if hwnd else None
             exe = os.path.basename(path).lower() if path else "-"
             fg = 1 if exe == "nikke.exe" else 0
-            is_primary = 1 if winapi.is_window_on_primary_monitor(hwnd) else 0
-            current = (fg, exe, is_primary)
+            is_primary = 1 if hwnd and winapi.is_window_on_primary_monitor(hwnd) else 0
+            current = (fg, exe, hwnd, is_primary)
             if state["last"] != current:
                 state["last"] = current
-                _queue_foreground_update(fg, exe, hwnd, is_primary)
+                enqueue_event("foreground", fg, exe, hwnd, is_primary)
         except Exception as exc:
             log.event("SYS", "ForegroundHook", "error", f"err={exc}")
 
-    hook, proc = winapi.set_foreground_event_hook(on_foreground)
-    if not hook:
-        err = winapi.get_last_error()
-        log.event("SYS", "ForegroundHook", "initFail", f"err={err}")
-    else:
-        log.event("SYS", "ForegroundHook", "init", "ok=1")
-    setattr(root, "_fg_hook", hook)
-    setattr(root, "_fg_proc", proc)
-    hwnd = winapi.get_foreground_hwnd()
-    on_foreground(0, 0, hwnd, 0, 0, 0, 0)
+    def on_location(hook, event, hwnd, obj_id, child_id, thread_id, time_ms):
+        try:
+            if obj_id != winapi.OBJID_WINDOW or child_id != winapi.CHILDID_SELF:
+                return
+            if not cursor_lock.is_active_window(hwnd):
+                return
+            enqueue_event("location", 0, "-", hwnd, 0)
+        except Exception as exc:
+            log.event("SYS", "LocationHook", "error", f"err={exc}")
 
-
-def _cursor_lock_tick(root: tk.Tk, settings: Settings) -> None:
-    hwnd = winapi.get_foreground_hwnd()
-    exe = winapi.get_foreground_exe_name() or "-"
-    is_game_primary = exe.lower() == "nikke.exe" and bool(hwnd) and winapi.is_window_on_primary_monitor(hwnd)
-    if settings.is_cursor_lock and is_game_primary:
-        rect = winapi.get_client_rect_screen(hwnd)
-        if rect and rect.width > 0 and rect.height > 0:
-            winapi.clip_cursor(rect)
+    def start_hooks() -> None:
+        if _app_state.get("closing"):
+            return
+        hook_state = winapi.start_window_event_hooks(on_foreground, on_location)
+        setattr(root, "_window_event_hooks", hook_state)
+        if not hook_state.foreground_hook:
+            log.event("SYS", "ForegroundHook", "initFail", f"err={hook_state.foreground_error}")
         else:
-            winapi.clip_cursor(None)
-    else:
-        winapi.clip_cursor(None)
-    root.after(200, lambda: _cursor_lock_tick(root, settings))
+            log.event("SYS", "ForegroundHook", "init", "ok=1")
+        if not hook_state.location_hook:
+            log.event("SYS", "LocationHook", "initFail", f"err={hook_state.location_error}")
+        else:
+            log.event("SYS", "LocationHook", "init", "ok=1")
+        hwnd = winapi.get_foreground_hwnd()
+        on_foreground(0, 0, hwnd, 0, 0, 0, 0)
+
+    root.after(0, start_hooks)
+
+
+def _handle_foreground_update(
+    ui: AppUI,
+    log: Logger,
+    hk: HotkeyManager,
+    settings: Settings,
+    cursor_lock: CursorLockController,
+    fg: int,
+    exe: str,
+    hwnd: int,
+    is_primary: int,
+) -> None:
+    if _app_state.get("closing"):
+        return
+    cursor_lock.on_foreground(hwnd, exe, bool(is_primary))
+    is_global = 1 if settings.is_global_hotkeys else 0
+    suppress = 1 if (is_global or (fg == 1 and is_primary == 1)) else 0
+    log.event(
+        "SYS",
+        "Context",
+        "foreground",
+        f"fg={fg} exe={exe} primary={is_primary} global={is_global} suppress={suppress}",
+    )
+    hk.set_key_blocking(bool(suppress))
+    if not suppress:
+        ui.actions.release_rhythm_preset2()
+    ui.set_game_state(fg, exe)
 
 
 def _show_ui(root: tk.Tk) -> None:
@@ -276,7 +378,6 @@ def _close_ui(root: tk.Tk, settings: Settings) -> None:
         return
     if log:
         log.event("SYS", "App", "close", "start")
-    winapi.clip_cursor(None)
     root.withdraw()
     if log:
         log.event("SYS", "App", "close", "done")
@@ -306,22 +407,24 @@ def _shutdown_app(root: tk.Tk, reason: str, icon=None) -> None:
     try:
         if log:
             log.event("SYS", "App", "shutdown", f"reason={reason} step=start")
-        winapi.clip_cursor(None)
+        cursor_lock: CursorLockController | None = _app_state.get("cursor_lock")
+        if cursor_lock:
+            cursor_lock.close()
         hk: HotkeyManager | None = _app_state.get("hk")
         if hk:
             if log:
                 log.event("SYS", "App", "shutdown", "step=hotkeys_stop")
             hk.stop()
-        actions = getattr(_fg_ui, "actions", None)
+        actions: Actions | None = _app_state.get("actions")
         if actions:
             actions.release_click_outputs()
             actions.release_rhythm_preset2()
             actions.close()
-        fg_hook = getattr(root, "_fg_hook", None)
-        if fg_hook:
+        window_event_hooks: winapi.WinEventHookState | None = getattr(root, "_window_event_hooks", None)
+        if window_event_hooks:
             if log:
-                log.event("SYS", "App", "shutdown", "step=fg_unhook")
-            winapi.unhook_win_event(fg_hook)
+                log.event("SYS", "App", "shutdown", "step=window_events_stop")
+            winapi.stop_window_event_hooks(window_event_hooks)
         if log:
             log.event("SYS", "App", "shutdown", "step=destroy")
         root.after(0, root.destroy)
@@ -343,50 +446,6 @@ def _shutdown_app(root: tk.Tk, reason: str, icon=None) -> None:
         _disable_faulthandler()
         if log:
             log.close()
-
-
-def _install_foreground_pending(root: tk.Tk, ui: AppUI, log: Logger, hk: HotkeyManager, settings: Settings) -> None:
-    global _fg_ui, _fg_log
-    _fg_ui = ui
-    _fg_log = log
-
-    def _drain_queue():
-        try:
-            last = None
-            while True:
-                try:
-                    last = _fg_queue.get_nowait()
-                except Exception:
-                    break
-            if last and _fg_ui and _fg_log:
-                fg, exe, _hwnd, is_primary = last
-                is_global = 1 if settings.is_global_hotkeys else 0
-                suppress = 1 if (is_global or (fg == 1 and is_primary == 1)) else 0
-                _fg_log.event(
-                    "SYS",
-                    "Context",
-                    "foreground",
-                    f"fg={fg} exe={exe} primary={is_primary} global={is_global} suppress={suppress}",
-                )
-                hk.set_key_blocking(bool(suppress))
-                if not suppress:
-                    _fg_ui.actions.release_rhythm_preset2()
-                _fg_ui.set_game_state(fg, exe)
-        except Exception as exc:
-            if _fg_log:
-                _fg_log.event("SYS", "ForegroundHook", "pendingError", f"err={exc}")
-        finally:
-            root.after(500, _drain_queue)
-
-    root.after(500, _drain_queue)
-
-
-def _queue_foreground_update(fg: int, exe: str, hwnd: int, is_primary: int) -> None:
-    _fg_pending["fg"] = fg
-    _fg_pending["exe"] = exe
-    _fg_pending["hwnd"] = hwnd
-    _fg_pending["primary"] = is_primary
-    _fg_queue.put((fg, exe, hwnd, is_primary))
 
 
 def _install_exception_logging(log: Logger) -> None:

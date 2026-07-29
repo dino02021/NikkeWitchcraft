@@ -37,6 +37,7 @@ class AppUI:
         actions: Actions,
         logger: Logger,
         on_logging_changed: Callable[[bool], None] | None = None,
+        on_cursor_lock_changed: Callable[[bool], None] | None = None,
     ):
         self.root = root
         self.s = settings
@@ -45,6 +46,7 @@ class AppUI:
         self.actions = actions
         self.log = logger
         self._on_logging_changed = on_logging_changed
+        self._on_cursor_lock_changed = on_cursor_lock_changed
 
         self.root.title(APP_TITLE)
         self.root.resizable(False, False)
@@ -394,6 +396,8 @@ class AppUI:
 
     def _toggle_cursor_lock(self) -> None:
         self.s.is_cursor_lock = self.chk_cursor_lock.get() != 0
+        if self._on_cursor_lock_changed:
+            self._on_cursor_lock_changed(self.s.is_cursor_lock)
         self.store.save(self.s)
 
     def _toggle_minimize_to_tray(self) -> None:
@@ -476,6 +480,8 @@ class AppUI:
             return
         Path(self.store.ini_path).write_bytes(Path(path).read_bytes())
         self.store.load(self.s)
+        if self._on_cursor_lock_changed:
+            self._on_cursor_lock_changed(self.s.is_cursor_lock)
         self._apply_hotkey_defs()
         self._refresh()
 
