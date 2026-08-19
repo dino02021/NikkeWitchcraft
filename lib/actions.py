@@ -135,15 +135,15 @@ class Actions:
             while self.hk.should_run(trigger_key, stop_ev):
                 seq = []
                 if self.s.jitter_z:
-                    seq.append("z")
+                    seq.append(self.s.game_key_jitter_z)
                 if self.s.jitter_x:
-                    seq.append("x")
+                    seq.append(self.s.game_key_jitter_x)
                 if self.s.jitter_c:
-                    seq.append("c")
+                    seq.append(self.s.game_key_jitter_c)
                 if self.s.jitter_v:
-                    seq.append("v")
+                    seq.append(self.s.game_key_jitter_v)
                 if self.s.jitter_b:
-                    seq.append("b")
+                    seq.append(self.s.game_key_jitter_b)
                 if not seq:
                     if not self.hk.wait_ms_cancel(self.s.key_spam_delay_ms, trigger_key, stop_ev):
                         reason = self._stop_reason(trigger_key, stop_ev)

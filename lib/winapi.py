@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import os
 import threading
 
+from .winhook import VK_NAME_MAP
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 psapi = ctypes.WinDLL("psapi", use_last_error=True)
@@ -315,16 +317,27 @@ VK_RBUTTON = 0x02
 
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
+KEYEVENTF_EXTENDEDKEY = 0x0001
+
+_KEY_NAME_TO_VK = {key_name.lower(): vk for vk, key_name in VK_NAME_MAP.items()}
+_EXTENDED_KEY_VKS = {
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x2D, 0x2E, 0x5B, 0x5C, 0x5D, 0x6F, 0x90, 0x91,
+    0xA3, 0xA5,
+}
 
 
 def _vk_from_name(name: str) -> int | None:
     n = name.strip().lower()
-    if len(n) == 1:
-        return ord(n.upper())
-    if n.startswith("f") and n[1:].isdigit():
-        idx = int(n[1:])
-        if 1 <= idx <= 24:
-            return 0x6F + idx
+    mapped = _KEY_NAME_TO_VK.get(n)
+    if mapped is not None:
+        return mapped
+    if n.startswith("vk_"):
+        try:
+            value = int(n[3:], 16)
+            return value if 0 <= value <= 0xFF else None
+        except ValueError:
+            return None
     vk_map = {
         "esc": 0x1B,
         "escape": 0x1B,
@@ -347,6 +360,10 @@ def _vk_from_name(name: str) -> int | None:
         "rcmd": 0x5C,
     }
     return vk_map.get(n)
+
+
+def can_send_key(name: str) -> bool:
+    return _vk_from_name(name) is not None
 
 def _scan_from_vk(vk: int) -> int:
     return int(user32.MapVirtualKeyW(vk, 0))
@@ -416,7 +433,8 @@ def _key_inputs(name: str, flags: int) -> list[INPUT]:
     if sc:
         inp = INPUT()
         inp.type = INPUT_KEYBOARD
-        inp.union.ki = KEYBDINPUT(0, sc, KEYEVENTF_SCANCODE | flags, 0, None)
+        extended = KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_KEY_VKS else 0
+        inp.union.ki = KEYBDINPUT(0, sc, KEYEVENTF_SCANCODE | extended | flags, 0, None)
         return [inp]
     return [_key_input(vk, flags)]
 

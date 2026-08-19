@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "NikkeWitchcraft"
-APP_VERSION = "1.26"
+APP_VERSION = "1.27"
 APP_TITLE = f"{APP_NAME} v{APP_VERSION}"
 
 
@@ -29,6 +29,16 @@ class Settings:
     key_click2: str = "F18"
     key_click3: str = "F19"
     key_jitter: str = "F20"
+
+    # game output keys
+    game_key_spam_a: str = "a"
+    game_key_spam_s: str = "s"
+    game_key_spam_d: str = "d"
+    game_key_jitter_z: str = "z"
+    game_key_jitter_x: str = "x"
+    game_key_jitter_c: str = "c"
+    game_key_jitter_v: str = "v"
+    game_key_jitter_b: str = "b"
 
     # enable
     is_esc_enabled: bool = False
@@ -110,6 +120,15 @@ class ConfigStore:
             s.jitter_c = getbool("Jitter", "C", fallback=s.jitter_c)
             s.jitter_v = getbool("Jitter", "V", fallback=s.jitter_v)
             s.jitter_b = getbool("Jitter", "B", fallback=s.jitter_b)
+        if cp.has_section("GameKeys"):
+            s.game_key_spam_a = get("GameKeys", "ASpam", fallback=s.game_key_spam_a)
+            s.game_key_spam_s = get("GameKeys", "SSpam", fallback=s.game_key_spam_s)
+            s.game_key_spam_d = get("GameKeys", "DSpam", fallback=s.game_key_spam_d)
+            s.game_key_jitter_z = get("GameKeys", "JitterZ", fallback=s.game_key_jitter_z)
+            s.game_key_jitter_x = get("GameKeys", "JitterX", fallback=s.game_key_jitter_x)
+            s.game_key_jitter_c = get("GameKeys", "JitterC", fallback=s.game_key_jitter_c)
+            s.game_key_jitter_v = get("GameKeys", "JitterV", fallback=s.game_key_jitter_v)
+            s.game_key_jitter_b = get("GameKeys", "JitterB", fallback=s.game_key_jitter_b)
         if cp.has_section("Buttons"):
             s.click_btn1 = get("Buttons", "ClickSeq1_Button", fallback=s.click_btn1)
             s.click_btn2 = get("Buttons", "ClickSeq2_Button", fallback=s.click_btn2)
@@ -162,6 +181,16 @@ class ConfigStore:
             "C": str(int(s.jitter_c)),
             "V": str(int(s.jitter_v)),
             "B": str(int(s.jitter_b)),
+        }
+        cp["GameKeys"] = {
+            "ASpam": s.game_key_spam_a,
+            "SSpam": s.game_key_spam_s,
+            "DSpam": s.game_key_spam_d,
+            "JitterZ": s.game_key_jitter_z,
+            "JitterX": s.game_key_jitter_x,
+            "JitterC": s.game_key_jitter_c,
+            "JitterV": s.game_key_jitter_v,
+            "JitterB": s.game_key_jitter_b,
         }
         cp["Buttons"] = {
             "ClickSeq1_Button": s.click_btn1,

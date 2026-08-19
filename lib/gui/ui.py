@@ -11,6 +11,8 @@ from ..log import Logger
 from ..hotkeys import HotkeyManager
 from ..actions import Actions
 from ..autostart import enable_autostart, disable_autostart
+from ..game_keys import GAME_KEY_LABELS, GAME_KEY_SPECS, duplicate_game_key_groups, normalize_game_key
+from .. import winapi
 from .layout import (
     create_frame,
     create_entry_frame,
@@ -52,7 +54,13 @@ class AppUI:
         self.root.resizable(False, False)
 
         self._binding_target: str | None = None
+        self._binding_parent: tk.Misc | None = None
+        self._bind_message_var: tk.StringVar | None = None
         self._bind_tip: tk.Toplevel | None = None
+        self._game_keys_dialog: tk.Toplevel | None = None
+        self._game_key_vars: dict[str, tk.StringVar] = {}
+        self._game_key_draft: dict[str, str] = {}
+        self._game_key_message_var = tk.StringVar()
         self._status_var = tk.StringVar()
         self._status_label: ttk.Label | None = None
         self._icon_img: tk.PhotoImage | None = None
@@ -101,13 +109,22 @@ class AppUI:
         create_entry_label(bind_frame, "按鍵綁定：", row=0, column=0)
         hotkey_frame = create_entry_frame(bind_frame, row=1, column=0)
         self._row_hotkey(hotkey_frame, 1, "ESC：", "EscMap")
-        self._row_hotkey(hotkey_frame, 2, "D連點：", "DSpam")
+        self._row_hotkey(hotkey_frame, 2, "A連點：", "ASpam")
         self._row_hotkey(hotkey_frame, 3, "S連點：", "SSpam")
-        self._row_hotkey(hotkey_frame, 4, "A連點：", "ASpam")
+        self._row_hotkey(hotkey_frame, 4, "D連點：", "DSpam")
         self._row_click(hotkey_frame, 5, "連點1：", "ClickSeq1")
         self._row_click(hotkey_frame, 6, "連點2：", "ClickSeq2")
         self._row_click(hotkey_frame, 7, "連點3：", "ClickSeq3")
         self._row_jitter(hotkey_frame, 8, "抖槍術：")
+        game_key_btn_frame = create_btn_frame(hotkey_frame, row=9, column=0, padx=0)
+        create_btn_last(
+            game_key_btn_frame,
+            "設定遊戲鍵位",
+            self._open_game_keys_dialog,
+            row=0,
+            column=0,
+            sticky="w",
+        )
         row += 1
 
         self._add_separator(container, row)
@@ -253,18 +270,27 @@ class AppUI:
         sep_frame.columnconfigure(0, weight=1)
         ttk.Separator(sep_frame, orient="horizontal").grid(row=0, column=0, sticky="ew")
 
-    def _start_bind(self, hid: str) -> None:
+    def _start_bind(self, hid: str, parent: tk.Misc | None = None, allow_mouse: bool = True) -> None:
         self._binding_target = hid
+        self._binding_parent = parent or self.root
         if self._bind_tip:
             close_dialog(self._bind_tip)
-        self._bind_tip = create_dialog(self.root, "綁定", 150, 80, override_redirect=False)
+        dialog_size = (280, 90) if not allow_mouse else (150, 80)
+        self._bind_tip = create_dialog(
+            self._binding_parent,
+            "綁定",
+            *dialog_size,
+            override_redirect=False,
+        )
         self._bind_tip.protocol("WM_DELETE_WINDOW", self._cancel_bind)
         dlg_frame = create_frame(self._bind_tip)
         dlg_frame.columnconfigure(0, weight=1)
         dlg_frame.rowconfigure(0, weight=1)
-        label = create_entry_label(dlg_frame, "請按下要綁定的按鍵", row=0, column=0, sticky="nswe", padx=0, pady=0)
+        prompt = "請按下鍵盤按鍵（不支援滑鼠）" if not allow_mouse else "請按下要綁定的按鍵"
+        self._bind_message_var = tk.StringVar(value=prompt)
+        label = create_msg_label(dlg_frame, self._bind_message_var, row=0, column=0, sticky="nswe", padx=0, pady=0)
         label.configure(anchor="center", justify="center")
-        self.hk.set_binding_callback(lambda _key_name: None)
+        self.hk.set_binding_callback(lambda _key_name: None, allow_mouse=allow_mouse)
         self.root.after(30, self._poll_bind_queue)
 
     def _poll_bind_queue(self) -> None:
@@ -279,17 +305,43 @@ class AppUI:
     def _cancel_bind(self) -> None:
         self._binding_target = None
         self.hk.set_binding_callback(None)
-        if self._bind_tip:
-            close_dialog(self._bind_tip)
-            self._bind_tip = None
+        self._close_bind_tip()
 
     def _finish_bind(self, key_name: str) -> None:
         hid = self._binding_target
+        if hid and hid.startswith("GameKey:"):
+            field = hid.split(":", 1)[1]
+            normalized = normalize_game_key(key_name)
+            if not winapi.can_send_key(normalized):
+                if self._bind_message_var:
+                    self._bind_message_var.set("此鍵目前不支援輸出，請按其他鍵")
+                self.root.after(30, self._poll_bind_queue)
+                return
+            duplicate_field = next(
+                (
+                    other_field
+                    for other_field, value in self._game_key_draft.items()
+                    if other_field != field and normalize_game_key(value) == normalized
+                ),
+                None,
+            )
+            if duplicate_field:
+                if self._bind_message_var:
+                    label = GAME_KEY_LABELS.get(duplicate_field, duplicate_field)
+                    self._bind_message_var.set(f"此鍵已用於 {label}，請按其他鍵")
+                self.root.after(30, self._poll_bind_queue)
+                return
+            self._game_key_draft[field] = normalized
+            if field in self._game_key_vars:
+                self._game_key_vars[field].set(self._display_key_name(normalized))
+            self._binding_target = None
+            self.hk.set_binding_callback(None)
+            self._close_bind_tip()
+            self._game_key_message_var.set("")
+            return
         self._binding_target = None
         self.hk.set_binding_callback(None)
-        if self._bind_tip:
-            close_dialog(self._bind_tip)
-            self._bind_tip = None
+        self._close_bind_tip()
         if not hid:
             return
         if hid == "EscMap":
@@ -311,6 +363,129 @@ class AppUI:
         self._apply_hotkey_defs()
         self.store.save(self.s)
         self._refresh()
+
+    def _close_bind_tip(self) -> None:
+        parent = self._binding_parent
+        if self._bind_tip:
+            close_dialog(self._bind_tip)
+            self._bind_tip = None
+        self._bind_message_var = None
+        self._binding_parent = None
+        if parent and parent is not self.root:
+            try:
+                if parent.winfo_exists():
+                    parent.grab_set()
+            except Exception:
+                pass
+
+    def _open_game_keys_dialog(self) -> None:
+        if self._game_keys_dialog:
+            try:
+                self._game_keys_dialog.lift()
+                self._game_keys_dialog.focus_force()
+                return
+            except Exception:
+                self._game_keys_dialog = None
+
+        self._game_key_draft = {
+            field: str(getattr(self.s, field)).strip().lower()
+            for field, _label, _default in GAME_KEY_SPECS
+        }
+        self._game_key_vars = {
+            field: tk.StringVar(value=self._display_key_name(value))
+            for field, value in self._game_key_draft.items()
+        }
+        self._game_key_message_var.set("")
+
+        dlg = create_dialog(self.root, "遊戲鍵位設定", 390, 340)
+        self._game_keys_dialog = dlg
+        dlg.protocol("WM_DELETE_WINDOW", self._close_game_keys_dialog)
+        frame = create_frame(dlg)
+        frame.columnconfigure(1, weight=1)
+
+        for row, (field, label, _default) in enumerate(GAME_KEY_SPECS):
+            create_entry_label(frame, f"{label}：", row=row, column=0)
+            entry = create_entry(frame, self._game_key_vars[field], row=row, column=1)
+            entry.configure(state="readonly", width=14)
+            btn_frame = create_btn_frame(frame, row=row, column=2, padding=(0, 0, 0, 0), pady=ui.ENTRY_PADY)
+            create_btn_last(
+                btn_frame,
+                "變更",
+                lambda target=field: self._start_game_key_bind(target),
+                row=0,
+                column=0,
+                sticky="w",
+            )
+
+        message = create_msg_label(
+            frame,
+            self._game_key_message_var,
+            row=len(GAME_KEY_SPECS),
+            column=0,
+            columnspan=3,
+            sticky="w",
+        )
+        message.configure(foreground="red")
+
+        buttons = create_btn_frame(frame, row=len(GAME_KEY_SPECS) + 1, column=0, columnspan=3)
+        buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
+        buttons.columnconfigure(2, weight=1)
+        create_btn_between(buttons, "儲存", self._save_game_keys, row=0, column=0, sticky="we")
+        create_btn_between(buttons, "取消", self._close_game_keys_dialog, row=0, column=1, sticky="we")
+        create_btn_last(buttons, "恢復預設", self._restore_default_game_keys, row=0, column=2, sticky="we")
+
+    def _start_game_key_bind(self, field: str) -> None:
+        if not self._game_keys_dialog:
+            return
+        self._game_key_message_var.set("")
+        self._start_bind(f"GameKey:{field}", parent=self._game_keys_dialog, allow_mouse=False)
+
+    def _restore_default_game_keys(self) -> None:
+        for field, _label, default in GAME_KEY_SPECS:
+            self._game_key_draft[field] = default
+            self._game_key_vars[field].set(self._display_key_name(default))
+        self._game_key_message_var.set("")
+
+    def _save_game_keys(self) -> None:
+        normalized = {
+            field: normalize_game_key(value)
+            for field, value in self._game_key_draft.items()
+        }
+        unsupported = [
+            GAME_KEY_LABELS[field]
+            for field, value in normalized.items()
+            if not winapi.can_send_key(value)
+        ]
+        if unsupported:
+            self._game_key_message_var.set(f"不支援的鍵位：{', '.join(unsupported)}")
+            return
+
+        duplicate_groups = duplicate_game_key_groups(normalized)
+        if duplicate_groups:
+            labels = [" / ".join(GAME_KEY_LABELS[field] for field in fields) for fields in duplicate_groups]
+            self._game_key_message_var.set(f"鍵位不可共用：{'; '.join(labels)}")
+            return
+
+        for field, value in normalized.items():
+            setattr(self.s, field, value)
+        self.store.save(self.s)
+        self._close_game_keys_dialog()
+
+    def _close_game_keys_dialog(self) -> None:
+        if self._binding_target and self._binding_target.startswith("GameKey:"):
+            self._cancel_bind()
+        if self._game_keys_dialog:
+            close_dialog(self._game_keys_dialog)
+            self._game_keys_dialog = None
+        self._game_key_vars.clear()
+        self._game_key_draft.clear()
+        self._game_key_message_var.set("")
+
+    @staticmethod
+    def _display_key_name(key_name: str) -> str:
+        key = key_name.strip()
+        return key.upper() if len(key) == 1 and key.isalpha() else key
 
     def _toggle_enabled(self, hid: str, var: tk.IntVar) -> None:
         val = var.get() != 0

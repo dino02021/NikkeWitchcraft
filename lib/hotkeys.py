@@ -44,6 +44,7 @@ class HotkeyManager:
         self._event_thread: threading.Thread | None = None
         self._defs: dict[str, HotkeyDef] = {}
         self._binding_cb: Optional[Callable[[str], None]] = None
+        self._binding_allow_mouse = True
         self._binding_q: queue.Queue[str] = queue.Queue()
         self._suppress = False
         self._force_pass_through = False
@@ -107,8 +108,9 @@ class HotkeyManager:
         blocking = ",".join(sorted(self._blocking_keys_cache)) or "-"
         self.log.event("HK", "-", "blocking", f"enabled={int(enable)} keys={blocking}")
 
-    def set_binding_callback(self, cb: Optional[Callable[[str], None]]) -> None:
+    def set_binding_callback(self, cb: Optional[Callable[[str], None]], allow_mouse: bool = True) -> None:
         self._binding_cb = cb
+        self._binding_allow_mouse = allow_mouse if cb is not None else True
         if cb is None:
             self._clear_binding_queue()
         self._sync_hooks()
@@ -376,7 +378,8 @@ class HotkeyManager:
         if self._force_pass_through:
             return False
         if self._binding_cb and is_down:
-            self._binding_q.put(name)
+            if self._binding_allow_mouse:
+                self._binding_q.put(name)
             return False
         if not self._should_listen(name):
             return False
@@ -446,11 +449,11 @@ class HotkeyManager:
 
     def _mouse_hook_filter(self, name: str) -> bool:
         if self._binding_cb:
-            return True
+            return self._binding_allow_mouse or self._norm(name) in self._bound_keys_cache
         return self._norm(name) in self._bound_keys_cache
 
     def _needs_mouse_hook(self) -> bool:
-        if self._binding_cb:
+        if self._binding_cb and self._binding_allow_mouse:
             return True
         return any(key in self._MOUSE_KEYS for key in self._bound_keys_cache)
 
